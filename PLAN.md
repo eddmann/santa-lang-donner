@@ -152,10 +152,10 @@ Release Gate 3
 LANG.txt: Sections 5, 7, 14.6, 15.5
 
 Release Gate 4
-- [ ] Lexical scoping and shadowing rules
-- [ ] Built-in function names are protected
-- [ ] Invalid return/break contexts raise runtime errors
-- [ ] Resolver tests green
+- [x] Lexical scoping and shadowing rules
+- [x] Built-in function names are protected
+- [x] Invalid return/break contexts raise runtime errors
+- [x] Resolver tests green
 
 ---
 
