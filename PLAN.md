@@ -113,10 +113,10 @@ Release Gate 0
 LANG.txt: Section 2, Appendix A
 
 Release Gate 1
-- [ ] All token types lexed correctly
-- [ ] Comments ignored
-- [ ] Line/column spans accurate
-- [ ] Snapshot tests green
+- [x] All token types lexed correctly
+- [x] Comments ignored
+- [x] Line/column spans accurate
+- [x] Snapshot tests green
 
 ---
 
