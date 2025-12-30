@@ -125,10 +125,10 @@ Release Gate 1
 LANG.txt: Sections 4, 6, 8, 14.5, Appendix A/C
 
 Release Gate 2
-- [ ] Pratt parser handles precedence table exactly
-- [ ] Infix calls, ranges, pipeline, composition
-- [ ] Literals and collection expressions
-- [ ] Snapshot tests green
+- [x] Pratt parser handles precedence table exactly
+- [x] Infix calls, ranges, pipeline, composition
+- [x] Literals and collection expressions
+- [x] Snapshot tests green
 
 ---
 
