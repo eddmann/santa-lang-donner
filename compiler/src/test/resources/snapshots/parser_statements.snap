@@ -1,0 +1,30 @@
+let [first, ..rest, _] = [1, 2, 3];
+let mut [x, y] = [1, 2];
+(let [first, ..rest, _] [1, 2, 3])
+(let mut [x, y] [1, 2])
+
+return 1;
+break 2;
+(return 1)
+(break 2)
+
+if let [x, ..rest] = value { x } else { 0 }
+(if (if-let [x, ..rest] value) { x } { 0 })
+
+match list {
+  [first, ..rest] if first > 0 { rest }
+  _ { [] }
+}
+(match list (arm [first, ..rest] (if (> first 0)) { rest }) (arm _ { [] }))
+
+input: 1 + 2
+part_one: input |> sum;
+(section input (+ 1 2))
+(section part_one (|> input sum))
+
+let x = {};
+if true { }
+let dict = #{a, b: 2};
+(let x {})
+(if true {})
+(let dict #{a, b: 2})

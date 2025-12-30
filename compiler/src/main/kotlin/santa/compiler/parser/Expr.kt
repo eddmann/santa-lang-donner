@@ -6,6 +6,35 @@ sealed interface Expr {
     val span: Span
 }
 
+sealed interface Statement {
+    val span: Span
+}
+
+sealed interface TopLevel {
+    val span: Span
+}
+
+data class Program(
+    val items: List<TopLevel>,
+)
+
+data class Section(
+    val name: String,
+    val expr: Expr,
+    override val span: Span,
+) : TopLevel
+
+data class StatementItem(
+    val statement: Statement,
+) : TopLevel {
+    override val span: Span = statement.span
+}
+
+data class ExprStatement(
+    val expr: Expr,
+    override val span: Span,
+) : Statement
+
 data class IntLiteralExpr(
     val lexeme: String,
     override val span: Span,
@@ -73,6 +102,23 @@ data class AssignmentExpr(
     override val span: Span,
 ) : Expr
 
+data class LetExpr(
+    val isMutable: Boolean,
+    val pattern: Pattern,
+    val value: Expr,
+    override val span: Span,
+) : Expr, Statement
+
+data class ReturnExpr(
+    val value: Expr,
+    override val span: Span,
+) : Expr, Statement
+
+data class BreakExpr(
+    val value: Expr,
+    override val span: Span,
+) : Expr, Statement
+
 data class RangeExpr(
     val start: Expr,
     val end: Expr?,
@@ -106,9 +152,79 @@ data class FunctionExpr(
 ) : Expr
 
 data class BlockExpr(
-    val expressions: List<Expr>,
+    val statements: List<Statement>,
     override val span: Span,
 ) : Expr
+
+data class IfExpr(
+    val condition: IfCondition,
+    val thenBranch: BlockExpr,
+    val elseBranch: Expr?,
+    override val span: Span,
+) : Expr
+
+data class MatchExpr(
+    val subject: Expr,
+    val arms: List<MatchArm>,
+    override val span: Span,
+) : Expr
+
+data class MatchArm(
+    val pattern: Pattern,
+    val guard: Expr?,
+    val body: BlockExpr,
+    val span: Span,
+)
+
+sealed interface IfCondition {
+    val span: Span
+}
+
+data class ExprCondition(
+    val expr: Expr,
+    override val span: Span,
+) : IfCondition
+
+data class LetCondition(
+    val pattern: Pattern,
+    val value: Expr,
+    override val span: Span,
+) : IfCondition
+
+sealed interface Pattern {
+    val span: Span
+}
+
+data class WildcardPattern(
+    override val span: Span,
+) : Pattern
+
+data class BindingPattern(
+    val name: String,
+    override val span: Span,
+) : Pattern
+
+data class RestPattern(
+    val name: String?,
+    override val span: Span,
+) : Pattern
+
+data class ListPattern(
+    val elements: List<Pattern>,
+    override val span: Span,
+) : Pattern
+
+data class LiteralPattern(
+    val literal: Expr,
+    override val span: Span,
+) : Pattern
+
+data class RangePattern(
+    val start: String,
+    val end: String?,
+    val isInclusive: Boolean,
+    override val span: Span,
+) : Pattern
 
 sealed interface CollectionElement {
     val expr: Expr
@@ -122,10 +238,16 @@ data class SpreadElement(
     override val expr: Expr,
 ) : CollectionElement
 
-data class DictEntry(
+sealed interface DictEntry
+
+data class KeyValueEntry(
     val key: Expr,
     val value: Expr,
-)
+) : DictEntry
+
+data class ShorthandEntry(
+    val name: String,
+) : DictEntry
 
 sealed interface CallArgument {
     val expr: Expr

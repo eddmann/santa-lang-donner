@@ -7,6 +7,21 @@ import santa.compiler.lexer.TokenType
 class Parser(private val tokens: List<Token>) {
     private var index = 0
 
+    fun parseProgram(): Program {
+        val items = mutableListOf<TopLevel>()
+
+        skipLineBreaks()
+        while (!check(TokenType.EOF)) {
+            items.add(parseTopLevel())
+            skipLineBreaks()
+            if (match(TokenType.SEMICOLON)) {
+                skipLineBreaks()
+            }
+        }
+
+        return Program(items)
+    }
+
     fun parseExpression(): Expr {
         skipLineBreaks()
         val expr = parseExpression(0)
@@ -19,6 +34,35 @@ class Parser(private val tokens: List<Token>) {
             throw error(end, "Expected end of expression")
         }
         return expr
+    }
+
+    private fun parseTopLevel(): TopLevel {
+        skipLineBreaks()
+        return if (isSectionStart()) {
+            parseSection()
+        } else {
+            StatementItem(parseStatement())
+        }
+    }
+
+    private fun parseSection(): Section {
+        val nameToken = expect(TokenType.IDENTIFIER, "Expected section name")
+        expect(TokenType.COLON, "Expected ':' after section name")
+        val expr = parseExpression(0)
+        return Section(nameToken.lexeme, expr, spanFrom(nameToken.span, expr.span))
+    }
+
+    private fun parseStatement(): Statement {
+        skipLineBreaks()
+        return when (peek().type) {
+            TokenType.LET -> parseLetBinding()
+            TokenType.RETURN -> parseReturnExpr()
+            TokenType.BREAK -> parseBreakExpr()
+            else -> {
+                val expr = parseExpression(0)
+                ExprStatement(expr, expr.span)
+            }
+        }
     }
 
     private fun parseExpression(minBp: Int): Expr {
@@ -37,6 +81,39 @@ class Parser(private val tokens: List<Token>) {
         }
 
         return left
+    }
+
+    private fun parseLetBinding(): LetExpr {
+        val letToken = expect(TokenType.LET, "Expected 'let'")
+        return parseLetBindingAfterLet(letToken)
+    }
+
+    private fun parseLetBindingAfterLet(letToken: Token): LetExpr {
+        val isMutable = match(TokenType.MUT)
+        val pattern = parsePattern()
+        expect(TokenType.ASSIGN, "Expected '=' after let pattern")
+        val value = parseExpression(0)
+        return LetExpr(isMutable, pattern, value, spanFrom(letToken.span, value.span))
+    }
+
+    private fun parseReturnExpr(): ReturnExpr {
+        val returnToken = expect(TokenType.RETURN, "Expected 'return'")
+        return parseReturnAfterToken(returnToken)
+    }
+
+    private fun parseBreakExpr(): BreakExpr {
+        val breakToken = expect(TokenType.BREAK, "Expected 'break'")
+        return parseBreakAfterToken(breakToken)
+    }
+
+    private fun parseReturnAfterToken(returnToken: Token): ReturnExpr {
+        val value = parseExpression(0)
+        return ReturnExpr(value, spanFrom(returnToken.span, value.span))
+    }
+
+    private fun parseBreakAfterToken(breakToken: Token): BreakExpr {
+        val value = parseExpression(0)
+        return BreakExpr(value, spanFrom(breakToken.span, value.span))
     }
 
     private fun parsePrefix(): Expr {
@@ -68,9 +145,14 @@ class Parser(private val tokens: List<Token>) {
             TokenType.UNDERSCORE -> PlaceholderExpr(token.span)
             TokenType.LPAREN -> parseGroupedExpression(token)
             TokenType.LBRACKET -> parseListLiteral(token)
-            TokenType.LBRACE -> parseSetLiteral(token)
+            TokenType.LBRACE -> parseBracedExpression(token)
             TokenType.DICT_START -> parseDictLiteral(token)
             TokenType.PIPE -> parseFunctionLiteral(token)
+            TokenType.LET -> parseLetBindingAfterLet(token)
+            TokenType.RETURN -> parseReturnAfterToken(token)
+            TokenType.BREAK -> parseBreakAfterToken(token)
+            TokenType.IF -> parseIfExpression(token)
+            TokenType.MATCH -> parseMatchExpression(token)
             else -> throw error(token, "Expected expression")
         }
     }
@@ -86,6 +168,16 @@ class Parser(private val tokens: List<Token>) {
         val elements = parseDelimitedElements(TokenType.RBRACKET) { parseCollectionElement() }
         val endToken = expect(TokenType.RBRACKET, "Expected ']' after list literal")
         return ListLiteralExpr(elements, spanFrom(startToken.span, endToken.span))
+    }
+
+    private fun parseBracedExpression(startToken: Token): Expr {
+        if (check(TokenType.RBRACE)) {
+            return parseSetLiteral(startToken)
+        }
+        if (isBlockExpressionStart()) {
+            return parseBlockExpression(startToken)
+        }
+        return parseSetLiteral(startToken)
     }
 
     private fun parseSetLiteral(startToken: Token): Expr {
@@ -113,11 +205,14 @@ class Parser(private val tokens: List<Token>) {
     private fun parseDictEntry(): DictEntry {
         val key = parseExpression(0)
         skipLineBreaks()
-        if (!match(TokenType.COLON)) {
-            throw error(peek(), "Expected ':' after dictionary key")
+        if (match(TokenType.COLON)) {
+            val value = parseExpression(0)
+            return KeyValueEntry(key, value)
         }
-        val value = parseExpression(0)
-        return DictEntry(key, value)
+        if (key is IdentifierExpr) {
+            return ShorthandEntry(key.name)
+        }
+        throw error(peek(), "Expected ':' after dictionary key")
     }
 
     private fun parseFunctionLiteral(startToken: Token): Expr {
@@ -165,14 +260,18 @@ class Parser(private val tokens: List<Token>) {
 
     private fun parseBlockExpression(): BlockExpr {
         val startToken = expect(TokenType.LBRACE, "Expected '{' to start block")
-        val expressions = mutableListOf<Expr>()
+        return parseBlockExpression(startToken)
+    }
+
+    private fun parseBlockExpression(startToken: Token): BlockExpr {
+        val statements = mutableListOf<Statement>()
 
         skipLineBreaks()
         while (!check(TokenType.RBRACE)) {
             if (check(TokenType.EOF)) {
                 throw error(peek(), "Expected '}' to close block")
             }
-            expressions.add(parseExpression(0))
+            statements.add(parseStatement())
             skipLineBreaks()
             if (match(TokenType.SEMICOLON)) {
                 skipLineBreaks()
@@ -180,7 +279,113 @@ class Parser(private val tokens: List<Token>) {
         }
 
         val endToken = expect(TokenType.RBRACE, "Expected '}' to close block")
-        return BlockExpr(expressions, spanFrom(startToken.span, endToken.span))
+        return BlockExpr(statements, spanFrom(startToken.span, endToken.span))
+    }
+
+    private fun parseIfExpression(startToken: Token): Expr {
+        val condition = parseIfCondition()
+        val thenBranch = parseBlockExpression()
+        val elseBranch = if (match(TokenType.ELSE)) {
+            if (match(TokenType.IF)) {
+                parseIfExpression(previous())
+            } else {
+                parseBlockExpression()
+            }
+        } else {
+            null
+        }
+        val endSpan = elseBranch?.span ?: thenBranch.span
+        return IfExpr(condition, thenBranch, elseBranch, spanFrom(startToken.span, endSpan))
+    }
+
+    private fun parseIfCondition(): IfCondition {
+        if (match(TokenType.LET)) {
+            val pattern = parsePattern()
+            expect(TokenType.ASSIGN, "Expected '=' after if-let pattern")
+            val value = parseExpression(0)
+            return LetCondition(pattern, value, spanFrom(pattern.span, value.span))
+        }
+        val expr = parseExpression(0)
+        return ExprCondition(expr, expr.span)
+    }
+
+    private fun parseMatchExpression(startToken: Token): Expr {
+        val subject = parseExpression(0)
+        skipLineBreaks()
+        expect(TokenType.LBRACE, "Expected '{' after match subject")
+        val arms = mutableListOf<MatchArm>()
+
+        skipLineBreaks()
+        while (!check(TokenType.RBRACE)) {
+            if (check(TokenType.EOF)) {
+                throw error(peek(), "Expected '}' after match arms")
+            }
+            val pattern = parsePattern()
+            skipLineBreaks()
+            val guard = if (match(TokenType.IF)) {
+                parseExpression(0)
+            } else {
+                null
+            }
+            val body = parseBlockExpression()
+            arms.add(MatchArm(pattern, guard, body, spanFrom(pattern.span, body.span)))
+            skipLineBreaks()
+        }
+
+        val endToken = expect(TokenType.RBRACE, "Expected '}' after match arms")
+        return MatchExpr(subject, arms, spanFrom(startToken.span, endToken.span))
+    }
+
+    private fun parsePattern(): Pattern {
+        skipLineBreaks()
+        val token = advance()
+        return when (token.type) {
+            TokenType.UNDERSCORE -> WildcardPattern(token.span)
+            TokenType.IDENTIFIER -> BindingPattern(token.lexeme, token.span)
+            TokenType.DOT_DOT -> parseRestPattern(token)
+            TokenType.LBRACKET -> parseListPattern(token)
+            TokenType.INTEGER -> parseRangeOrLiteralPattern(token)
+            TokenType.DECIMAL -> LiteralPattern(DecimalLiteralExpr(token.lexeme, token.span), token.span)
+            TokenType.STRING -> LiteralPattern(StringLiteralExpr(token.lexeme, token.span), token.span)
+            TokenType.TRUE -> LiteralPattern(BoolLiteralExpr(true, token.span), token.span)
+            TokenType.FALSE -> LiteralPattern(BoolLiteralExpr(false, token.span), token.span)
+            TokenType.NIL -> LiteralPattern(NilLiteralExpr(token.span), token.span)
+            else -> throw error(token, "Expected pattern")
+        }
+    }
+
+    private fun parseRestPattern(startToken: Token): Pattern {
+        val nameToken = if (check(TokenType.IDENTIFIER)) {
+            advance()
+        } else {
+            null
+        }
+        val endSpan = nameToken?.span ?: startToken.span
+        return RestPattern(nameToken?.lexeme, spanFrom(startToken.span, endSpan))
+    }
+
+    private fun parseListPattern(startToken: Token): Pattern {
+        val elements = parseDelimitedElements(TokenType.RBRACKET) { parsePattern() }
+        val endToken = expect(TokenType.RBRACKET, "Expected ']' after list pattern")
+        return ListPattern(elements, spanFrom(startToken.span, endToken.span))
+    }
+
+    private fun parseRangeOrLiteralPattern(startToken: Token): Pattern {
+        if (check(TokenType.DOT_DOT) || check(TokenType.DOT_DOT_EQUAL)) {
+            val rangeToken = advance()
+            val isInclusive = rangeToken.type == TokenType.DOT_DOT_EQUAL
+            val endToken = if (check(TokenType.INTEGER)) {
+                advance()
+            } else {
+                null
+            }
+            if (isInclusive && endToken == null) {
+                throw error(peek(), "Expected integer after '..=' in range pattern")
+            }
+            val endSpan = endToken?.span ?: rangeToken.span
+            return RangePattern(startToken.lexeme, endToken?.lexeme, isInclusive, spanFrom(startToken.span, endSpan))
+        }
+        return LiteralPattern(IntLiteralExpr(startToken.lexeme, startToken.span), startToken.span)
     }
 
     private fun parsePostfix(expr: Expr): Expr {
@@ -341,6 +546,40 @@ class Parser(private val tokens: List<Token>) {
         return elements
     }
 
+    private fun isSectionStart(): Boolean {
+        return check(TokenType.IDENTIFIER) && peekNext().type == TokenType.COLON
+    }
+
+    private fun isBlockExpressionStart(): Boolean {
+        var depth = 0
+        var cursor = index
+        while (cursor < tokens.size) {
+            val token = tokens[cursor]
+            if (depth == 0) {
+                when (token.type) {
+                    TokenType.RBRACE -> return false
+                    TokenType.SEMICOLON -> return true
+                    TokenType.COMMA -> return false
+                    TokenType.LET, TokenType.RETURN, TokenType.BREAK -> return true
+                    else -> {}
+                }
+            }
+            when (token.type) {
+                TokenType.LPAREN, TokenType.LBRACKET, TokenType.LBRACE -> depth += 1
+                TokenType.RPAREN, TokenType.RBRACKET, TokenType.RBRACE -> {
+                    if (depth > 0) {
+                        depth -= 1
+                    } else {
+                        return false
+                    }
+                }
+                else -> {}
+            }
+            cursor += 1
+        }
+        return false
+    }
+
     private fun skipLineBreaks() {
         while (match(TokenType.NEWLINE)) {
             // Skip line breaks between tokens.
@@ -372,6 +611,8 @@ class Parser(private val tokens: List<Token>) {
 
     private fun peek(): Token = tokens[index]
 
+    private fun peekNext(): Token = tokens.getOrElse(index + 1) { tokens.last() }
+
     private fun previous(): Token = tokens[index - 1]
 
     private fun error(token: Token, message: String): ParseException = ParseException(message, token.span.start)
@@ -392,12 +633,17 @@ class Parser(private val tokens: List<Token>) {
         is UnaryExpr -> copy(span = span)
         is BinaryExpr -> copy(span = span)
         is AssignmentExpr -> copy(span = span)
+        is LetExpr -> copy(span = span)
+        is ReturnExpr -> copy(span = span)
+        is BreakExpr -> copy(span = span)
         is RangeExpr -> copy(span = span)
         is InfixCallExpr -> copy(span = span)
         is CallExpr -> copy(span = span)
         is IndexExpr -> copy(span = span)
         is FunctionExpr -> copy(span = span)
         is BlockExpr -> copy(span = span)
+        is IfExpr -> copy(span = span)
+        is MatchExpr -> copy(span = span)
     }
 
     private companion object {

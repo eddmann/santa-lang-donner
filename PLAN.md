@@ -137,13 +137,13 @@ Release Gate 2
 LANG.txt: Sections 5, 7, 9, 12, Appendix A
 
 Release Gate 3
-- [ ] let/mut, return, break
-- [ ] Destructuring patterns (rest, nested, wildcard)
-- [ ] Match expressions and guards
-- [ ] AOC sections parsed
-- [ ] Empty {} disambiguation (set vs block)
-- [ ] Dict shorthand parsing
-- [ ] Snapshot tests green
+- [x] let/mut, return, break
+- [x] Destructuring patterns (rest, nested, wildcard)
+- [x] Match expressions and guards
+- [x] AOC sections parsed
+- [x] Empty {} disambiguation (set vs block)
+- [x] Dict shorthand parsing
+- [x] Snapshot tests green
 
 ---
 
