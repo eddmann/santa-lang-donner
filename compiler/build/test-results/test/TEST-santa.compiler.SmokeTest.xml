@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<testsuite name="santa.compiler.SmokeTest" tests="1" skipped="0" failures="0" errors="0" timestamp="2025-12-30T10:32:46" hostname="Edds-MacBook-Pro-3.local" time="0.005">
-  <properties/>
-  <testcase name="junit_and_kotest_are_wired()" classname="santa.compiler.SmokeTest" time="0.005"/>
-  <system-out><![CDATA[]]></system-out>
-  <system-err><![CDATA[]]></system-err>
-</testsuite>
