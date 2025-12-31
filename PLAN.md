@@ -261,9 +261,9 @@ Release Gate 12
 LANG.txt: Section 15.4
 
 Release Gate 13
-- [ ] Bytecode optimizations where safe
-- [ ] Benchmark harness in place
-- [ ] Example programs run within expected time
+- [x] Bytecode optimizations where safe
+- [x] Benchmark harness in place
+- [x] Example programs run within expected time
 
 ---
 
