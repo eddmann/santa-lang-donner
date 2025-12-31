@@ -228,7 +228,7 @@ Release Gate 10
 - [x] All remaining built-ins implemented
 - [x] Regex and md5 built-ins validated
 - [x] Built-in test suite green
-- [ ] evaluate built-in (deferred - requires full compiler embedding)
+- [N/A] evaluate built-in (not implementing - requires full compiler embedding)
 
 ---
 
