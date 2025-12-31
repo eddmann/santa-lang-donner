@@ -11,15 +11,31 @@ class Resolver(
 
     fun resolve(program: Program) {
         pushScope()
+
+        // First pass: declare section names (input, part_one, part_two)
+        // This allows sections to reference each other
+        for (item in program.items) {
+            if (item is Section && item.name in SECTION_NAMES) {
+                declareName(item.name)
+            }
+        }
+
+        // Second pass: resolve all expressions
         program.items.forEach { resolveTopLevel(it) }
         popScope()
     }
 
     private fun resolveTopLevel(item: TopLevel) {
         when (item) {
-            is Section -> resolveExpr(item.expr)
+            is Section -> resolveSection(item)
             is StatementItem -> resolveStatement(item.statement)
         }
+    }
+
+    private fun resolveSection(section: Section) {
+        // Sections like input:, part_one:, part_two: are bound as variables
+        // But we also need to resolve the expression
+        resolveExpr(section.expr)
     }
 
     private fun resolveStatement(statement: Statement) {
@@ -326,5 +342,7 @@ class Resolver(
 
     private companion object {
         private val unknownPosition = SourcePosition(0, 0)
+        // Known section names that get bound as variables
+        val SECTION_NAMES = setOf("input", "part_one", "part_two")
     }
 }

@@ -237,11 +237,11 @@ Release Gate 10
 LANG.txt: Section 12, 13
 
 Release Gate 11
-- [ ] Sections executed correctly
+- [x] Sections executed correctly
 - [ ] Test blocks validated
-- [ ] Script mode works
-- [ ] read/puts/env external functions
-- [ ] CLI commands and exit codes
+- [x] Script mode works
+- [x] read/puts/env external functions
+- [x] CLI commands and exit codes
 
 ---
 

@@ -64,15 +64,48 @@ private class ClassGenerator(private val className: String) {
         if (program.items.isEmpty()) {
             exprGen.pushNil()
         } else {
+            // Group items by type
+            val sections = program.items.filterIsInstance<Section>()
+            val inputSection = sections.find { it.name == "input" }
+            val partSections = sections.filter { it.name in setOf("part_one", "part_two") }
+            val hasParts = partSections.isNotEmpty()
+
+            // Process all items in order, binding sections as variables
             program.items.forEachIndexed { index, item ->
                 when (item) {
-                    is StatementItem -> exprGen.compileStatement(item.statement)
-                    is Section -> TODO("Sections not yet implemented")
+                    is StatementItem -> {
+                        exprGen.compileStatement(item.statement)
+                        // Pop statement result unless it's the last item (and no part sections)
+                        if (!hasParts && index < program.items.lastIndex) {
+                            mv.visitInsn(POP)
+                        } else if (hasParts) {
+                            mv.visitInsn(POP)
+                        }
+                    }
+                    is Section -> {
+                        // Compile the section expression
+                        exprGen.compileExpr(item.expr)
+
+                        // If this is a known section, bind it as a variable
+                        if (item.name in SECTION_NAMES) {
+                            // Store in a local slot and register binding
+                            val slot = exprGen.allocateSlot()
+                            exprGen.declareBinding(item.name, slot, isMutable = false)
+                            mv.visitInsn(DUP)  // Keep value on stack
+                            mv.visitVarInsn(ASTORE, slot)
+                        }
+
+                        // Pop intermediate results
+                        if (index < program.items.lastIndex) {
+                            mv.visitInsn(POP)
+                        }
+                    }
                 }
-                // Pop intermediate results, keep only last
-                if (index < program.items.lastIndex) {
-                    mv.visitInsn(POP)
-                }
+            }
+
+            // If there are no items, push nil
+            if (program.items.isEmpty()) {
+                exprGen.pushNil()
             }
         }
 
@@ -190,6 +223,7 @@ private class ClassGenerator(private val className: String) {
     companion object {
         const val VALUE_TYPE = "santa/runtime/value/Value"
         const val FUNCTION_VALUE_TYPE = "santa/runtime/value/FunctionValue"
+        val SECTION_NAMES = setOf("input", "part_one", "part_two")
     }
 }
 
@@ -1194,8 +1228,30 @@ private open class ExpressionGenerator(
     }
 
     private fun compileBuiltinCall(name: String, arguments: List<CallArgument>) {
-        // Push arguments
         val plainArgs = arguments.filterIsInstance<ExprArgument>()
+
+        // Special handling for variadic functions
+        if (name == "puts") {
+            // Create a Value[] array for varargs
+            pushIntValue(plainArgs.size)
+            mv.visitTypeInsn(ANEWARRAY, VALUE_TYPE)
+            for ((index, arg) in plainArgs.withIndex()) {
+                mv.visitInsn(DUP)
+                pushIntValue(index)
+                compileExpr(arg.expr)
+                mv.visitInsn(AASTORE)
+            }
+            mv.visitMethodInsn(
+                INVOKESTATIC,
+                BUILTINS_TYPE,
+                name,
+                "([L${VALUE_TYPE};)L${VALUE_TYPE};",
+                false
+            )
+            return
+        }
+
+        // Push arguments for fixed-arity builtins
         for (arg in plainArgs) {
             compileExpr(arg.expr)
         }
@@ -1229,7 +1285,7 @@ private open class ExpressionGenerator(
         scopes.removeLast()
     }
 
-    protected fun declareBinding(name: String, slot: Int, isMutable: Boolean) {
+    fun declareBinding(name: String, slot: Int, isMutable: Boolean) {
         scopes.last()[name] = LocalBinding(name, slot, isMutable)
     }
 
@@ -1240,7 +1296,7 @@ private open class ExpressionGenerator(
         return null
     }
 
-    protected fun allocateSlot(): Int = nextSlot++
+    fun allocateSlot(): Int = nextSlot++
 
     // Helpers
 
@@ -1332,6 +1388,8 @@ private open class ExpressionGenerator(
             "bit_and", "bit_or", "bit_xor", "bit_not", "bit_shift_left", "bit_shift_right",
             // Utility
             "id", "memoize",
+            // External functions
+            "read", "puts",
         )
     }
 }

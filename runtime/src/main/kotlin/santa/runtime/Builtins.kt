@@ -1603,6 +1603,77 @@ object Builtins {
         else -> emptyList()
     }
 
+    // ===== External Functions =====
+
+    /**
+     * read(path) - Reads file contents.
+     *
+     * Supported schemes:
+     * - Local files: read("./input.txt")
+     * - HTTP(S): read("https://example.com/data.txt")
+     * - AOC: read("aoc://year/day") - fetches puzzle input
+     *
+     * Returns nil if file not found or fetch fails.
+     */
+    @JvmStatic
+    fun read(path: Value): Value {
+        if (path !is StringValue) {
+            throw SantaRuntimeException("read: expected String path, got ${path.typeName()}")
+        }
+        val pathStr = path.value
+        return try {
+            when {
+                pathStr.startsWith("http://") || pathStr.startsWith("https://") -> {
+                    val url = java.net.URI(pathStr).toURL()
+                    StringValue(url.readText())
+                }
+                pathStr.startsWith("aoc://") -> {
+                    // AOC URLs: aoc://year/day -> fetch from adventofcode.com
+                    // For now, return nil - CLI will provide actual implementation
+                    NilValue
+                }
+                else -> {
+                    // Local file path
+                    val file = java.io.File(pathStr)
+                    if (file.exists() && file.isFile) {
+                        StringValue(file.readText())
+                    } else {
+                        NilValue
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            NilValue
+        }
+    }
+
+    /**
+     * puts(...values) - Prints values to stdout.
+     *
+     * Multiple values are separated by spaces.
+     * Returns nil.
+     */
+    @JvmStatic
+    fun puts(vararg values: Value): Value {
+        val output = values.joinToString(" ") { valueToString(it) }
+        println(output)
+        return NilValue
+    }
+
+    private fun valueToString(value: Value): String = when (value) {
+        is StringValue -> value.value
+        is IntValue -> value.value.toString()
+        is DecimalValue -> value.value.toString()
+        is BoolValue -> value.value.toString()
+        is NilValue -> "nil"
+        is ListValue -> "[" + (0 until value.size()).map { valueToString(value.get(it)) }.joinToString(", ") + "]"
+        is SetValue -> "{" + value.elements.map { valueToString(it) }.joinToString(", ") + "}"
+        is DictValue -> "#{" + value.entries.entries.map { (k, v) -> "${valueToString(k)}: ${valueToString(v)}" }.joinToString(", ") + "}"
+        is FunctionValue -> "<function>"
+        is LazySequenceValue -> "<lazy-sequence>"
+        is RangeValue -> "<range>"
+    }
+
     /**
      * Lookup table for built-in functions by name.
      * Maps name -> (arity, function reference)

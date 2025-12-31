@@ -1104,4 +1104,67 @@ class CodegenTest {
             eval("let f = || 1; if f { \"yes\" } else { \"no\" }") shouldBe StringValue("yes")
         }
     }
+
+    @Nested
+    inner class ExternalFunctions {
+        @Test
+        fun `puts returns nil`() {
+            eval("puts(\"hello\")") shouldBe NilValue
+        }
+
+        @Test
+        fun `puts with multiple values returns nil`() {
+            eval("puts(1, 2, 3)") shouldBe NilValue
+        }
+
+        @Test
+        fun `read non-existent file returns nil`() {
+            eval("read(\"/non/existent/path.txt\")") shouldBe NilValue
+        }
+    }
+
+    @Nested
+    inner class Sections {
+        @Test
+        fun `input section binds input variable`() {
+            eval("""
+                input: "hello world"
+                input
+            """.trimIndent()) shouldBe StringValue("hello world")
+        }
+
+        @Test
+        fun `part_one has access to input`() {
+            eval("""
+                input: 42
+                part_one: input + 1
+            """.trimIndent()) shouldBe IntValue(43)
+        }
+
+        @Test
+        fun `part_two has access to input`() {
+            eval("""
+                input: 100
+                part_two: input * 2
+            """.trimIndent()) shouldBe IntValue(200)
+        }
+
+        @Test
+        fun `top level statements with sections`() {
+            eval("""
+                let x = 10;
+                input: x * 2
+                part_one: input + 5
+            """.trimIndent()) shouldBe IntValue(25)
+        }
+
+        @Test
+        fun `script mode returns last expression`() {
+            eval("""
+                let x = 1;
+                let y = 2;
+                x + y
+            """.trimIndent()) shouldBe IntValue(3)
+        }
+    }
 }
