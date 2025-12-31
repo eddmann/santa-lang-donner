@@ -5,164 +5,79 @@ solutions in `~/Projects/advent-of-code`.
 
 ## Executive Summary
 
-**Current Status: NOT READY for AOC solutions**
+**Current Status: READY for AOC solutions testing**
 
-The Donner compiler successfully implements the core language features but is missing
-several critical features heavily used in AOC solutions. None of the existing AOC
-solutions can run successfully in their current form.
+All previously blocking features have been implemented. The compiler should now be
+capable of running AOC solutions. Remaining work is validation testing against the
+actual solution files.
 
-## Missing Features (Blocking)
+## Implemented Features (Previously Blocking)
 
-### 1. Multiline String Literals
+### 1. Multiline String Literals ✅ IMPLEMENTED
 **Impact: ALL 26 solutions in 2022, ALL 14 in 2023, ALL 7 in 2025**
-**Severity: CRITICAL**
 
-AOC solutions use multiline strings in test blocks:
-```santa
-test: {
-  input: "1000
-2000
-3000
-
-4000"  // <-- Lexer throws "Unterminated string literal"
-  part_one: 24000
-}
-```
-
-**Location**: `compiler/src/main/kotlin/santa/compiler/lexer/Lexer.kt:118-119`
-```kotlin
-if (c == '\n') {
-    throw LexingException("Unterminated string literal", start)
-}
-```
-
-**Fix Required**: Support multiline strings (either raw or allow newlines in regular strings).
+Multiline strings are now supported. The lexer allows newline characters within string literals.
 
 ---
 
-### 2. Collection Slicing with Ranges
+### 2. Collection Slicing with Ranges ✅ IMPLEMENTED
 **Impact: 23+ solutions**
-**Severity: CRITICAL**
 
-Slicing syntax `collection[start..end]` is not implemented:
-```santa
-let s = "hello world"
-s[0..5]  // RuntimeError: String index must be Integer, got Range
-```
-
-```santa
-let xs = [1, 2, 3, 4, 5]
-xs[1..4]  // RuntimeError: List index must be Integer, got Range
-```
-
-**Location**: `runtime/src/main/kotlin/santa/runtime/Operators.kt:216-230`
-
-The `index` function only handles `IntValue`, not `RangeValue`.
-
-**LANG.txt Reference**: Section 10.1 (List slicing), Section 3.3 (String slicing)
-```santa
-let numbers = [1, 2, 3, 4, 5];
-numbers[1..3]    // [2, 3]
-numbers[2..]     // [3, 4, 5]
-numbers[..3]     // [1, 2, 3]
-```
+Slicing syntax now works for both lists and strings:
+- `xs[1..3]` - slice from index 1 to 3 (exclusive)
+- `xs[2..]` - slice from index 2 to end
+- `s[0..5]` - substring from 0 to 5
 
 ---
 
-### 3. Placeholder Expressions (`_`)
+### 3. Placeholder Expressions (`_`) ✅ IMPLEMENTED
 **Impact: 20+ solutions in 2022**
-**Severity: CRITICAL**
 
-Placeholder syntax for creating anonymous functions is not implemented:
-```santa
-let inc = _ + 1  // NotImplementedError: Placeholders not yet implemented
-```
-
-Common patterns in AOC:
-```santa
-filter(_ > 0)
-map(_ * 2)
-sort(|[_, a], [_, b]| a > b)  // Also uses destructuring
-```
-
-**Location**: `compiler/src/main/kotlin/santa/compiler/codegen/CodeGenerator.kt:378`
-```kotlin
-is PlaceholderExpr -> TODO("Placeholders not yet implemented")
-```
+Placeholder expressions are desugared to lambdas:
+- `_ + 1` → `|$0| $0 + 1`
+- `filter(_ > 0)` - works as expected
+- `map(_ * 2)` - works as expected
 
 ---
 
-### 4. Destructuring in Lambda Parameters
+### 4. Destructuring in Lambda Parameters ✅ IMPLEMENTED
 **Impact: 23 solutions**
-**Severity: CRITICAL**
 
-Lambda parameter destructuring is not supported:
-```santa
-[[1, 2], [3, 4]] |> map(|[a, b]| a + b)
-// SyntaxError: Expected parameter name
-```
-
-AOC patterns:
-```santa
-fold_s([0, 0]) |[sum, count], n| [sum + n, count + 1]
-iterate(|[a, b]| [b, a + b], [0, 1])
-sort(|[_, a], [_, b]| a > b)
-```
-
-**LANG.txt Reference**: Section 8 shows `|[a, b], _|` syntax.
+Lambda parameter destructuring is desugared to let bindings:
+- `|[a, b]| a + b` → `|$arg0| { let [a, b] = $arg0; a + b }`
+- Works with `fold_s`, `iterate`, `sort`, etc.
 
 ---
 
-### 5. AOC URL Read Support (`read("aoc://...")`)
+### 5. AOC URL Read Support (`read("aoc://...")`) ✅ IMPLEMENTED
 **Impact: Tests using puzzle input in ALL solutions**
-**Severity: HIGH**
 
-The `read("aoc://year/day")` function returns `nil`:
-```kotlin
-// runtime/src/main/kotlin/santa/runtime/Builtins.kt:1673-1676
-pathStr.startsWith("aoc://") -> {
-    // AOC URLs: aoc://year/day -> fetch from adventofcode.com
-    // For now, return nil - CLI will provide actual implementation
-    NilValue
-}
-```
-
-**Workaround Possible**: Use local `.input` files with relative paths.
+The `read("aoc://year/day")` function now fetches puzzle input:
+- Checks cache at `~/.cache/santa-lang/aoc/{year}/day{day}.txt`
+- Gets session from `AOC_SESSION` env var or `~/.aoc_session` file
+- Fetches from `adventofcode.com` and caches for future use
 
 ---
 
-### 6. Dict Shorthand Syntax
+### 6. Dict Shorthand Syntax ✅ IMPLEMENTED
 **Impact: 1-2 solutions (day 11)**
-**Severity: MEDIUM**
 
 Dict shorthand where identifier is used as both key and value:
-```santa
-let items = [1, 2, 3]
-#{items, "activity": 0}
-// NotImplementedError: Shorthand entries in dict literals not yet implemented
-```
-
-**Location**: `compiler/src/main/kotlin/santa/compiler/codegen/CodeGenerator.kt:1303`
+- `#{items, op}` creates `#{"items": items, "op": op}`
 
 ---
 
-### 7. Recursive Memoization Self-Reference
+### 7. Recursive Memoization Self-Reference ✅ IMPLEMENTED
 **Impact: Day 12 (2023) - dynamic programming**
-**Severity: MEDIUM**
 
-While regular recursive functions work, memoized recursive self-reference fails:
-```santa
-let fib = memoize(|n| if n < 2 { n } else { fib(n-1) + fib(n-2) })
-// ResolveError: Undefined identifier 'fib'
-```
-
-The spec shows (lang.txt line 1077-1081):
+Memoized recursive self-reference now works:
 ```santa
 let fib = memoize |n| {
   if n < 2 { n }
   else { fib(n - 1) + fib(n - 2) }
 }
 ```
+Recursive calls go through the memoized wrapper for caching.
 
 ---
 
@@ -212,15 +127,15 @@ These features work correctly and are used in AOC solutions:
 
 ---
 
-## Recommended Implementation Order
+## Implementation Order (ALL COMPLETE ✅)
 
-1. **Multiline Strings** (unblocks test block parsing for all solutions)
-2. **Collection Slicing** (used in 23+ solutions)
-3. **Destructuring in Lambda Params** (used in 23 solutions)
-4. **Placeholder Expressions** (used in 20+ solutions)
-5. **AOC URL Read** (enables full-input tests)
-6. **Dict Shorthand** (nice-to-have)
-7. **Memoize Self-Reference** (enables DP solutions like day 12)
+1. ✅ **Multiline Strings** - unblocks test block parsing
+2. ✅ **Collection Slicing** - used in 23+ solutions
+3. ✅ **Placeholder Expressions** - used in 20+ solutions
+4. ✅ **Destructuring in Lambda Params** - used in 23 solutions
+5. ✅ **Dict Shorthand** - nice-to-have
+6. ✅ **AOC URL Read** - enables full-input tests
+7. ✅ **Memoize Self-Reference** - enables DP solutions
 
 ---
 
@@ -232,10 +147,10 @@ These features work correctly and are used in AOC solutions:
 | Functions and closures | PASS |
 | Built-ins (most) | PASS |
 | AOC section parsing | PASS |
-| Test block execution | BLOCKED (multiline strings) |
-| 2022 solutions | 0/26 passing |
-| 2023 solutions | 0/14 passing |
-| 2025 solutions | 0/7 passing |
+| Test block execution | READY (multiline strings implemented) |
+| 2022 solutions | PENDING validation |
+| 2023 solutions | PENDING validation |
+| 2025 solutions | PENDING validation |
 
 ---
 
@@ -245,11 +160,11 @@ These features work correctly and are used in AOC solutions:
 # Test a simple script
 ./gradlew cli:run -q --args="/path/to/script.santa"
 
-# Run tests in a solution file (requires multiline string support)
+# Run tests in a solution file
 ./gradlew cli:run -q --args="-t /path/to/solution.santa"
 ```
 
 ---
 
-*Generated: 2025-12-31*
-*Donner version: Phase 15 complete*
+*Updated: 2025-12-31*
+*Donner version: Phase 16 features complete*
