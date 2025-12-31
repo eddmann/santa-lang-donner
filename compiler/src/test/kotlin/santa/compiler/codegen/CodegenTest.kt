@@ -1209,4 +1209,84 @@ class CodegenTest {
             """.trimIndent()) shouldBe NilValue
         }
     }
+
+    @Nested
+    inner class PipelineOperator {
+        @Test
+        fun `simple pipeline with builtin function`() {
+            // [1, 2, 3] |> size -> size([1, 2, 3]) -> 3
+            eval("[1, 2, 3] |> size") shouldBe IntValue(3)
+        }
+
+        @Test
+        fun `pipeline with lambda`() {
+            // 5 |> |x| x * 2 -> 10
+            eval("5 |> (|x| x * 2)") shouldBe IntValue(10)
+        }
+
+        @Test
+        fun `pipeline chain`() {
+            // [1, 2, 3, 4] |> rest |> size -> 3
+            eval("[1, 2, 3, 4] |> rest |> size") shouldBe IntValue(3)
+        }
+
+        @Test
+        fun `pipeline with map`() {
+            val result = eval("[1, 2, 3] |> map(|x| x * 2)") as ListValue
+            result.size() shouldBe 3
+            result.get(0) shouldBe IntValue(2)
+            result.get(1) shouldBe IntValue(4)
+            result.get(2) shouldBe IntValue(6)
+        }
+
+        @Test
+        fun `pipeline with filter and sum`() {
+            // [1, 2, 3, 4] |> filter(|x| x > 2) |> sum -> 7
+            eval("[1, 2, 3, 4] |> filter(|x| x > 2) |> sum") shouldBe IntValue(7)
+        }
+
+        @Test
+        fun `pipeline with partial application`() {
+            // 5 |> max -> max(5) but max needs 1 arg (collection), this should work
+            // Actually, for [1, 5, 3] |> max -> max([1, 5, 3]) -> 5
+            eval("[1, 5, 3] |> max") shouldBe IntValue(5)
+        }
+    }
+
+    @Nested
+    inner class CompositionOperator {
+        @Test
+        fun `simple composition of lambdas`() {
+            // |x| x + 1 >> |x| x * 2 applied to 5 -> (5+1)*2 = 12
+            eval("let f = (|x| x + 1) >> (|x| x * 2); f(5)") shouldBe IntValue(12)
+        }
+
+        @Test
+        fun `composition with builtins`() {
+            // rest >> size applied to [1, 2, 3] -> size(rest([1, 2, 3])) -> 2
+            eval("let f = rest >> size; f([1, 2, 3])") shouldBe IntValue(2)
+        }
+
+        @Test
+        fun `composition chain`() {
+            // |x| x + 1 >> |x| x * 2 >> |x| x - 1 applied to 5 -> ((5+1)*2)-1 = 11
+            eval("let f = (|x| x + 1) >> (|x| x * 2) >> (|x| x - 1); f(5)") shouldBe IntValue(11)
+        }
+
+        @Test
+        fun `composition with higher-order functions`() {
+            // parse_lines = lines >> map(int) style composition
+            eval("""
+                let double_all = map(|x| x * 2);
+                let sum_all = sum;
+                let f = double_all >> sum_all;
+                f([1, 2, 3])
+            """.trimIndent()) shouldBe IntValue(12)
+        }
+
+        @Test
+        fun `composition returns a function`() {
+            eval("type((|x| x + 1) >> (|x| x * 2))") shouldBe StringValue("Function")
+        }
+    }
 }

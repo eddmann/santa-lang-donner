@@ -1776,3 +1776,132 @@ data class BuiltinInfo(
     val arity: Int,
     val function: Any, // KFunction reference
 )
+
+/**
+ * Partially applied builtin function.
+ *
+ * When a builtin is called with fewer arguments than expected,
+ * this wrapper captures the partial arguments and waits for the rest.
+ */
+class PartiallyAppliedBuiltinValue(
+    val name: String,
+    val partialArgs: List<Value>
+) : FunctionValue(
+    (Builtins.registry[name]?.arity ?: throw SantaRuntimeException("Unknown builtin: $name")) - partialArgs.size
+) {
+    override fun invoke(args: List<Value>): Value {
+        // Combine partial args with new args and invoke the full builtin
+        val fullArgs = partialArgs + args
+        return BuiltinFunctionValue(name).invoke(fullArgs)
+    }
+}
+
+/**
+ * Wrapper to use a builtin as a first-class FunctionValue.
+ *
+ * This allows builtins to be passed to pipeline/compose operators
+ * or stored in variables and called later.
+ *
+ * Supports partial application: if called with fewer args than expected,
+ * returns a PartiallyAppliedBuiltinValue.
+ */
+class BuiltinFunctionValue(val name: String) : FunctionValue(
+    Builtins.registry[name]?.arity ?: throw SantaRuntimeException("Unknown builtin: $name")
+) {
+    override fun invoke(args: List<Value>): Value {
+        // Delegate to the static builtin invocation
+        return when (name) {
+            // 1-arity functions
+            "size" -> Builtins.size(args[0])
+            "first" -> Builtins.first(args[0])
+            "rest" -> Builtins.rest(args[0])
+            "int" -> Builtins.int(args[0])
+            "type" -> Builtins.type(args[0])
+            "keys" -> Builtins.keys(args[0])
+            "values" -> Builtins.values(args[0])
+            "abs" -> Builtins.abs(args[0])
+            "ints" -> Builtins.ints(args[0])
+            "list" -> Builtins.list(args[0])
+            "set" -> Builtins.set(args[0])
+            "dict" -> Builtins.dict(args[0])
+            "second" -> Builtins.second(args[0])
+            "last" -> Builtins.last(args[0])
+            "sum" -> Builtins.sum(args[0])
+            "max" -> Builtins.max(args[0])
+            "min" -> Builtins.min(args[0])
+            "reverse" -> Builtins.reverse(args[0])
+            "union" -> Builtins.union(args[0])
+            "intersection" -> Builtins.intersection(args[0])
+            "repeat" -> Builtins.repeat(args[0])
+            "cycle" -> Builtins.cycle(args[0])
+            "lines" -> Builtins.lines(args[0])
+            "upper" -> Builtins.upper(args[0])
+            "lower" -> Builtins.lower(args[0])
+            "md5" -> Builtins.md5(args[0])
+            "signum" -> Builtins.signum(args[0])
+            "bit_not" -> Builtins.bit_not(args[0])
+            "id" -> Builtins.id(args[0])
+            "memoize" -> Builtins.memoize(args[0])
+
+            // 2-arity functions
+            "push" -> Builtins.push(args[0], args[1])
+            "get" -> Builtins.get(args[0], args[1])
+            "map" -> Builtins.map(args[0], args[1])
+            "filter" -> Builtins.filter(args[0], args[1])
+            "flat_map" -> Builtins.flat_map(args[0], args[1])
+            "filter_map" -> Builtins.filter_map(args[0], args[1])
+            "find_map" -> Builtins.find_map(args[0], args[1])
+            "reduce" -> Builtins.reduce(args[0], args[1])
+            "each" -> Builtins.each(args[0], args[1])
+            "find" -> Builtins.find(args[0], args[1])
+            "count" -> Builtins.count(args[0], args[1])
+            "skip" -> Builtins.skip(args[0], args[1])
+            "take" -> Builtins.take(args[0], args[1])
+            "sort" -> Builtins.sort(args[0], args[1])
+            "rotate" -> Builtins.rotate(args[0], args[1])
+            "chunk" -> Builtins.chunk(args[0], args[1])
+            "includes?" -> Builtins.`includes?`(args[0], args[1])
+            "excludes?" -> Builtins.`excludes?`(args[0], args[1])
+            "any?" -> Builtins.`any?`(args[0], args[1])
+            "all?" -> Builtins.`all?`(args[0], args[1])
+            "iterate" -> Builtins.iterate(args[0], args[1])
+            "zip" -> Builtins.zip(args[0])  // Actually 1-arity, takes list of collections
+            "combinations" -> Builtins.combinations(args[0], args[1])
+            "split" -> Builtins.split(args[0], args[1])
+            "join" -> Builtins.join(args[0], args[1])
+            "regex_match" -> Builtins.regex_match(args[0], args[1])
+            "regex_match_all" -> Builtins.regex_match_all(args[0], args[1])
+            "vec_add" -> Builtins.vec_add(args[0], args[1])
+            "bit_and" -> Builtins.bit_and(args[0], args[1])
+            "bit_or" -> Builtins.bit_or(args[0], args[1])
+            "bit_xor" -> Builtins.bit_xor(args[0], args[1])
+            "bit_shift_left" -> Builtins.bit_shift_left(args[0], args[1])
+            "bit_shift_right" -> Builtins.bit_shift_right(args[0], args[1])
+
+            // 3-arity functions
+            "assoc" -> Builtins.assoc(args[0], args[1], args[2])
+            "update" -> Builtins.update(args[0], args[1], args[2])
+            "fold" -> Builtins.fold(args[0], args[1], args[2])
+            "fold_s" -> Builtins.fold_s(args[0], args[1], args[2])
+            "scan" -> Builtins.scan(args[0], args[1], args[2])
+            "replace" -> Builtins.replace(args[0], args[1], args[2])
+            "range" -> Builtins.range(args[0], args[1], args[2])
+
+            // 4-arity functions
+            "update_d" -> Builtins.update_d(args[0], args[1], args[2], args[3])
+
+            else -> throw SantaRuntimeException("Builtin not yet supported as first-class value: $name")
+        }
+    }
+
+    companion object {
+        /** Cache of builtin wrappers for efficiency. */
+        private val cache = mutableMapOf<String, BuiltinFunctionValue>()
+
+        /** Get or create a wrapper for the given builtin name. */
+        @JvmStatic
+        fun get(name: String): BuiltinFunctionValue {
+            return cache.getOrPut(name) { BuiltinFunctionValue(name) }
+        }
+    }
+}

@@ -454,8 +454,8 @@ private open class ExpressionGenerator(
                     BinaryOperator.LESS_EQUAL -> "lessOrEqual"
                     BinaryOperator.GREATER -> "greaterThan"
                     BinaryOperator.GREATER_EQUAL -> "greaterOrEqual"
-                    BinaryOperator.PIPELINE -> TODO("Pipeline not yet implemented")
-                    BinaryOperator.COMPOSE -> TODO("Compose not yet implemented")
+                    BinaryOperator.PIPELINE -> "pipeline"
+                    BinaryOperator.COMPOSE -> "compose"
                     BinaryOperator.AND, BinaryOperator.OR -> error("Handled above")
                 }
                 mv.visitMethodInsn(
@@ -562,6 +562,20 @@ private open class ExpressionGenerator(
     }
 
     private fun compileIdentifier(expr: IdentifierExpr) {
+        // Check if it's a builtin function reference (for pipeline/compose)
+        if (expr.name in BUILTIN_FUNCTIONS) {
+            // Load a BuiltinFunctionValue wrapper for this builtin
+            mv.visitLdcInsn(expr.name)
+            mv.visitMethodInsn(
+                INVOKESTATIC,
+                "santa/runtime/BuiltinFunctionValue",
+                "get",
+                "(Ljava/lang/String;)Lsanta/runtime/BuiltinFunctionValue;",
+                false
+            )
+            return
+        }
+
         val binding = lookupBinding(expr.name)
             ?: throw CodegenException("Undefined variable: ${expr.name}")
         mv.visitVarInsn(ALOAD, binding.slot)
@@ -1238,6 +1252,7 @@ private open class ExpressionGenerator(
 
     private fun compileBuiltinCall(name: String, arguments: List<CallArgument>) {
         val plainArgs = arguments.filterIsInstance<ExprArgument>()
+        val expectedArity = BUILTIN_ARITIES[name] ?: throw CodegenException("Unknown builtin: $name")
 
         // Special handling for variadic functions
         if (name == "puts") {
@@ -1255,6 +1270,41 @@ private open class ExpressionGenerator(
                 BUILTINS_TYPE,
                 name,
                 "([L${VALUE_TYPE};)L${VALUE_TYPE};",
+                false
+            )
+            return
+        }
+
+        // Partial application: if fewer args than expected, return PartiallyAppliedBuiltinValue
+        if (plainArgs.size < expectedArity) {
+            // Create a PartiallyAppliedBuiltinValue with the partial arguments
+            mv.visitTypeInsn(NEW, "santa/runtime/PartiallyAppliedBuiltinValue")
+            mv.visitInsn(DUP)
+            mv.visitLdcInsn(name)
+
+            // Create List<Value> for partial args
+            pushIntValue(plainArgs.size)
+            mv.visitTypeInsn(ANEWARRAY, VALUE_TYPE)
+            for ((index, arg) in plainArgs.withIndex()) {
+                mv.visitInsn(DUP)
+                pushIntValue(index)
+                compileExpr(arg.expr)
+                mv.visitInsn(AASTORE)
+            }
+            mv.visitMethodInsn(
+                INVOKESTATIC,
+                "java/util/Arrays",
+                "asList",
+                "([Ljava/lang/Object;)Ljava/util/List;",
+                false
+            )
+
+            // Call constructor: PartiallyAppliedBuiltinValue(String, List<Value>)
+            mv.visitMethodInsn(
+                INVOKESPECIAL,
+                "santa/runtime/PartiallyAppliedBuiltinValue",
+                "<init>",
+                "(Ljava/lang/String;Ljava/util/List;)V",
                 false
             )
             return
@@ -1399,6 +1449,36 @@ private open class ExpressionGenerator(
             "id", "memoize",
             // External functions
             "read", "puts",
+        )
+
+        /** Arity of each builtin function for partial application support. */
+        val BUILTIN_ARITIES = mapOf(
+            // 1-arity functions
+            "size" to 1, "first" to 1, "rest" to 1, "int" to 1, "type" to 1,
+            "keys" to 1, "values" to 1, "abs" to 1, "ints" to 1, "list" to 1,
+            "set" to 1, "dict" to 1, "second" to 1, "last" to 1,
+            "sum" to 1, "max" to 1, "min" to 1, "reverse" to 1,
+            "union" to 1, "intersection" to 1,
+            "repeat" to 1, "cycle" to 1, "lines" to 1, "upper" to 1, "lower" to 1,
+            "md5" to 1, "signum" to 1, "bit_not" to 1, "id" to 1, "memoize" to 1,
+            "read" to 1, "zip" to 1,
+            // 2-arity functions
+            "push" to 2, "get" to 2, "map" to 2, "filter" to 2, "flat_map" to 2,
+            "filter_map" to 2, "find_map" to 2, "reduce" to 2, "each" to 2,
+            "find" to 2, "count" to 2, "skip" to 2, "take" to 2, "sort" to 2,
+            "rotate" to 2, "chunk" to 2,
+            "includes?" to 2, "excludes?" to 2, "any?" to 2, "all?" to 2,
+            "iterate" to 2, "combinations" to 2, "split" to 2, "join" to 2,
+            "regex_match" to 2, "regex_match_all" to 2, "vec_add" to 2,
+            "bit_and" to 2, "bit_or" to 2, "bit_xor" to 2,
+            "bit_shift_left" to 2, "bit_shift_right" to 2,
+            // 3-arity functions
+            "assoc" to 3, "update" to 3, "fold" to 3, "fold_s" to 3, "scan" to 3,
+            "replace" to 3, "range" to 3,
+            // 4-arity functions
+            "update_d" to 4,
+            // Variadic (-1 indicates variadic)
+            "puts" to -1,
         )
     }
 }

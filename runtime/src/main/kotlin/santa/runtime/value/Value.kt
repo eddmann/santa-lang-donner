@@ -483,3 +483,19 @@ class MemoizedFunctionValue(private val wrapped: FunctionValue) : FunctionValue(
         return cache.getOrPut(args) { wrapped.invoke(args) }
     }
 }
+
+/**
+ * Composed function: f >> g (LANG.txt §4.8).
+ *
+ * Applies first function then second: (f >> g)(x) = g(f(x))
+ */
+class ComposedFunctionValue(
+    private val first: FunctionValue,
+    private val second: FunctionValue
+) : FunctionValue(first.arity) {
+
+    override fun invoke(args: List<Value>): Value {
+        val intermediate = first.invoke(args)
+        return second.invoke(listOf(intermediate))
+    }
+}

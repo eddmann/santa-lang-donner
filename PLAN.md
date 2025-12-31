@@ -204,7 +204,7 @@ Release Gate 8
 - [x] if / if-let / match execution
 - [x] Lambdas and closures with captured variables
 - [ ] Rest parameters and spread (deferred)
-- [ ] Pipeline and composition behavior (deferred)
+- [x] Pipeline and composition behavior (completed in Phase 14)
 - [ ] Tail-call optimization strategy defined and tested (deferred)
 
 ---
@@ -272,9 +272,14 @@ Release Gate 13
 LANG.txt: Appendix D
 
 Release Gate 14
-- [ ] All example programs pass
-- [ ] Full test suite green
-- [ ] Documentation updated
+- [x] Pipeline (|>) and composition (>>) operators implemented
+- [x] Partial application for builtins (e.g., `map(|x| x * 2)`)
+- [x] Builtins as first-class function values
+- [x] Example program tests (AOC style, word frequency, pipelines)
+- [x] Full test suite green
+- [ ] Recursive function self-reference (deferred)
+- [ ] Range expressions (deferred)
+- [ ] Return/break statements (deferred)
 
 ---
 

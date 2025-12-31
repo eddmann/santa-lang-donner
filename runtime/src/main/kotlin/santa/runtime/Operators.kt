@@ -228,6 +228,33 @@ object Operators {
         else -> throw SantaRuntimeException("Cannot index ${target.typeName()}")
     }
 
+    /**
+     * Pipeline: a |> f
+     * Passes left value as argument to right function.
+     */
+    @JvmStatic
+    fun pipeline(value: Value, func: Value): Value {
+        if (func !is FunctionValue) {
+            throw SantaRuntimeException("Pipeline right-hand side must be a Function, got ${func.typeName()}")
+        }
+        return func.invoke(listOf(value))
+    }
+
+    /**
+     * Composition: f >> g
+     * Creates a new function that applies f first, then g.
+     */
+    @JvmStatic
+    fun compose(first: Value, second: Value): Value {
+        if (first !is FunctionValue) {
+            throw SantaRuntimeException("Compose left-hand side must be a Function, got ${first.typeName()}")
+        }
+        if (second !is FunctionValue) {
+            throw SantaRuntimeException("Compose right-hand side must be a Function, got ${second.typeName()}")
+        }
+        return ComposedFunctionValue(first, second)
+    }
+
     /** Compare two values. Returns negative if left < right, 0 if equal, positive if left > right. */
     @JvmStatic
     fun compare(left: Value, right: Value): Int = when (left) {
