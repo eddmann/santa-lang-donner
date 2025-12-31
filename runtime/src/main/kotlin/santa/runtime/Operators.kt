@@ -1,5 +1,6 @@
 package santa.runtime
 
+import kotlinx.collections.immutable.toPersistentList
 import santa.runtime.value.*
 import kotlin.math.floor
 
@@ -253,6 +254,77 @@ object Operators {
             throw SantaRuntimeException("Compose right-hand side must be a Function, got ${second.typeName()}")
         }
         return ComposedFunctionValue(first, second)
+    }
+
+    /**
+     * Convert a Java List<Value> to a ListValue.
+     * Used by codegen for rest parameters.
+     */
+    @JvmStatic
+    @Suppress("UNCHECKED_CAST")
+    fun listFromJavaList(list: List<*>): ListValue {
+        return ListValue((list as List<Value>).toPersistentList())
+    }
+
+    /**
+     * Spread a collection into an ArrayList being built for function call arguments.
+     * Mutates the list and returns Unit (the list reference itself is preserved).
+     */
+    @JvmStatic
+    @Suppress("UNCHECKED_CAST")
+    fun spreadIntoJavaList(list: java.util.ArrayList<*>, spread: Value) {
+        val mutableList = list as java.util.ArrayList<Value>
+        when (spread) {
+            is ListValue -> mutableList.addAll(spread.elements)
+            is SetValue -> mutableList.addAll(spread.elements)
+            is RangeValue -> {
+                if (spread.isUnbounded()) {
+                    throw SantaRuntimeException("Cannot spread unbounded range into arguments")
+                }
+                spread.toList().forEach { mutableList.add(IntValue(it)) }
+            }
+            else -> throw SantaRuntimeException("Cannot spread ${spread.typeName()} into arguments")
+        }
+    }
+
+    /**
+     * Spread a collection into a PersistentList being built.
+     * Used by codegen for spread syntax in list literals: [1, ..xs, 2]
+     */
+    @JvmStatic
+    fun spreadIntoList(
+        list: kotlinx.collections.immutable.PersistentList<Value>,
+        spread: Value
+    ): kotlinx.collections.immutable.PersistentList<Value> = when (spread) {
+        is ListValue -> list.addAll(spread.elements)
+        is SetValue -> list.addAll(spread.elements)
+        is RangeValue -> {
+            if (spread.isUnbounded()) {
+                throw SantaRuntimeException("Cannot spread unbounded range into list")
+            }
+            list.addAll(spread.toList().map { IntValue(it) })
+        }
+        else -> throw SantaRuntimeException("Cannot spread ${spread.typeName()} into list")
+    }
+
+    /**
+     * Spread a collection into a PersistentSet being built.
+     * Used by codegen for spread syntax in set literals: {1, ..xs, 2}
+     */
+    @JvmStatic
+    fun spreadIntoSet(
+        set: kotlinx.collections.immutable.PersistentSet<Value>,
+        spread: Value
+    ): kotlinx.collections.immutable.PersistentSet<Value> = when (spread) {
+        is ListValue -> set.addAll(spread.elements)
+        is SetValue -> set.addAll(spread.elements)
+        is RangeValue -> {
+            if (spread.isUnbounded()) {
+                throw SantaRuntimeException("Cannot spread unbounded range into set")
+            }
+            set.addAll(spread.toList().map { IntValue(it) })
+        }
+        else -> throw SantaRuntimeException("Cannot spread ${spread.typeName()} into set")
     }
 
     /** Compare two values. Returns negative if left < right, 0 if equal, positive if left > right. */

@@ -1429,6 +1429,111 @@ class CodegenTest {
     }
 
     @Nested
+    inner class SpreadAndRest {
+        @Test
+        fun `spread in list literal - single spread`() {
+            val result = eval("let xs = [1, 2, 3]; [0, ..xs, 4]") as ListValue
+            result.size() shouldBe 5
+            result.get(0) shouldBe IntValue(0)
+            result.get(1) shouldBe IntValue(1)
+            result.get(2) shouldBe IntValue(2)
+            result.get(3) shouldBe IntValue(3)
+            result.get(4) shouldBe IntValue(4)
+        }
+
+        @Test
+        fun `spread in list literal - spread at beginning`() {
+            val result = eval("let xs = [1, 2]; [..xs, 3]") as ListValue
+            result.size() shouldBe 3
+            result.get(0) shouldBe IntValue(1)
+            result.get(1) shouldBe IntValue(2)
+            result.get(2) shouldBe IntValue(3)
+        }
+
+        @Test
+        fun `spread in list literal - spread at end`() {
+            val result = eval("let xs = [2, 3]; [1, ..xs]") as ListValue
+            result.size() shouldBe 3
+            result.get(0) shouldBe IntValue(1)
+            result.get(1) shouldBe IntValue(2)
+            result.get(2) shouldBe IntValue(3)
+        }
+
+        @Test
+        fun `spread in list literal - multiple spreads`() {
+            val result = eval("let xs = [1, 2]; let ys = [3, 4]; [..xs, ..ys]") as ListValue
+            result.size() shouldBe 4
+            result.get(0) shouldBe IntValue(1)
+            result.get(1) shouldBe IntValue(2)
+            result.get(2) shouldBe IntValue(3)
+            result.get(3) shouldBe IntValue(4)
+        }
+
+        @Test
+        fun `spread empty list`() {
+            val result = eval("let xs = []; [1, ..xs, 2]") as ListValue
+            result.size() shouldBe 2
+            result.get(0) shouldBe IntValue(1)
+            result.get(1) shouldBe IntValue(2)
+        }
+
+        @Test
+        fun `spread in set literal`() {
+            val result = eval("let xs = {1, 2}; {0, ..xs, 3}") as SetValue
+            result.size() shouldBe 4
+        }
+
+        @Test
+        fun `rest parameter collects remaining arguments`() {
+            val result = eval("let f = |head, ..remaining| remaining; f(1, 2, 3, 4)") as ListValue
+            result.size() shouldBe 3
+            result.get(0) shouldBe IntValue(2)
+            result.get(1) shouldBe IntValue(3)
+            result.get(2) shouldBe IntValue(4)
+        }
+
+        @Test
+        fun `rest parameter with no remaining arguments`() {
+            val result = eval("let f = |head, ..remaining| remaining; f(1)") as ListValue
+            result.size() shouldBe 0
+        }
+
+        @Test
+        fun `rest parameter with only rest`() {
+            val result = eval("let f = |..args| args; f(1, 2, 3)") as ListValue
+            result.size() shouldBe 3
+            result.get(0) shouldBe IntValue(1)
+            result.get(1) shouldBe IntValue(2)
+            result.get(2) shouldBe IntValue(3)
+        }
+
+        @Test
+        fun `rest parameter returns first argument separately`() {
+            eval("let f = |head, ..remaining| head; f(1, 2, 3)") shouldBe IntValue(1)
+        }
+
+        @Test
+        fun `spread in function call`() {
+            val result = eval("""
+                let f = |a, b, c| a + b + c;
+                let args = [1, 2, 3];
+                f(..args)
+            """.trimIndent())
+            result shouldBe IntValue(6)
+        }
+
+        @Test
+        fun `spread in function call with other args`() {
+            val result = eval("""
+                let f = |a, b, c, d| a + b + c + d;
+                let args = [2, 3];
+                f(1, ..args, 4)
+            """.trimIndent())
+            result shouldBe IntValue(10)
+        }
+    }
+
+    @Nested
     inner class CompositionOperator {
         @Test
         fun `simple composition of lambdas`() {

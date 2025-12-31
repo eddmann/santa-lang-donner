@@ -203,7 +203,7 @@ LANG.txt: Sections 7, 8, 9
 Release Gate 8
 - [x] if / if-let / match execution
 - [x] Lambdas and closures with captured variables
-- [ ] Rest parameters and spread (deferred)
+- [x] Rest parameters and spread (completed in Phase 15)
 - [x] Pipeline and composition behavior (completed in Phase 14)
 - [ ] Tail-call optimization strategy defined and tested (deferred)
 
@@ -281,6 +281,19 @@ Release Gate 14
 - [x] Break statements (exception-based early exit from iterations)
 - [x] Range expressions (exclusive, inclusive, unbounded)
 - [x] Recursive function self-reference
+
+---
+
+## Phase 15: Spread and Rest Parameters
+
+LANG.txt: Sections 4.9, 8.5, 8.6
+
+Release Gate 15
+- [x] Spread in list literals (`[1, ..xs, 2]`)
+- [x] Spread in set literals (`{1, ..xs, 2}`)
+- [x] Rest parameters in functions (`|head, ..remaining|`)
+- [x] Spread in function call arguments (`f(1, ..args, 2)`)
+- [x] Full test suite green
 
 ---
 

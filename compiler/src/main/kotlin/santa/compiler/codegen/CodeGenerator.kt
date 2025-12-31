@@ -1145,7 +1145,18 @@ private open class ExpressionGenerator(
                         true
                     )
                 }
-                is SpreadElement -> TODO("Spread in list literals not yet implemented")
+                is SpreadElement -> {
+                    // Evaluate the spread expression (should be a collection)
+                    compileExpr(element.expr)
+                    // Call Operators.spreadIntoList to add all elements
+                    mv.visitMethodInsn(
+                        INVOKESTATIC,
+                        OPERATORS_TYPE,
+                        "spreadIntoList",
+                        "(Lkotlinx/collections/immutable/PersistentList;L${VALUE_TYPE};)Lkotlinx/collections/immutable/PersistentList;",
+                        false
+                    )
+                }
             }
         }
 
@@ -1182,7 +1193,18 @@ private open class ExpressionGenerator(
                         true
                     )
                 }
-                is SpreadElement -> TODO("Spread in set literals not yet implemented")
+                is SpreadElement -> {
+                    // Evaluate the spread expression (should be a collection)
+                    compileExpr(element.expr)
+                    // Call Operators.spreadIntoSet to add all elements
+                    mv.visitMethodInsn(
+                        INVOKESTATIC,
+                        OPERATORS_TYPE,
+                        "spreadIntoSet",
+                        "(Lkotlinx/collections/immutable/PersistentSet;L${VALUE_TYPE};)Lkotlinx/collections/immutable/PersistentSet;",
+                        false
+                    )
+                }
             }
         }
 
@@ -1390,25 +1412,76 @@ private open class ExpressionGenerator(
             // General function call - evaluate callee (should be FunctionValue)
             compileExpr(callee)
 
-            // Build argument list
-            val plainArgs = expr.arguments.filterIsInstance<ExprArgument>()
+            // Check if there are any spread arguments
+            val hasSpread = expr.arguments.any { it is SpreadArgument }
 
-            // Create List<Value> for arguments: Arrays.asList(arg1, arg2, ...)
-            pushIntValue(plainArgs.size)
-            mv.visitTypeInsn(ANEWARRAY, VALUE_TYPE)
-            for ((index, arg) in plainArgs.withIndex()) {
+            if (hasSpread) {
+                // With spreads, build argument list dynamically using ArrayList
+                mv.visitTypeInsn(NEW, "java/util/ArrayList")
                 mv.visitInsn(DUP)
-                pushIntValue(index)
-                compileExpr(arg.expr)
-                mv.visitInsn(AASTORE)
+                mv.visitMethodInsn(
+                    INVOKESPECIAL,
+                    "java/util/ArrayList",
+                    "<init>",
+                    "()V",
+                    false
+                )
+
+                for (arg in expr.arguments) {
+                    when (arg) {
+                        is ExprArgument -> {
+                            // list.add(value)
+                            mv.visitInsn(DUP)
+                            compileExpr(arg.expr)
+                            mv.visitMethodInsn(
+                                INVOKEVIRTUAL,
+                                "java/util/ArrayList",
+                                "add",
+                                "(Ljava/lang/Object;)Z",
+                                false
+                            )
+                            mv.visitInsn(POP) // pop the boolean result
+                        }
+                        is SpreadArgument -> {
+                            // Spread collection into the argument list
+                            // Stack: [callee, list]
+                            mv.visitInsn(DUP)
+                            // Stack: [callee, list, list]
+                            compileExpr(arg.expr)
+                            // Stack: [callee, list, list, spread_value]
+                            // spreadIntoJavaList(list, spread_value) mutates list and returns void
+                            mv.visitMethodInsn(
+                                INVOKESTATIC,
+                                OPERATORS_TYPE,
+                                "spreadIntoJavaList",
+                                "(Ljava/util/ArrayList;L${VALUE_TYPE};)V",
+                                false
+                            )
+                            // Stack: [callee, list] - the DUPed reference remains
+                        }
+                    }
+                }
+            } else {
+                // No spreads: use efficient array approach
+                val plainArgs = expr.arguments.filterIsInstance<ExprArgument>()
+
+                // Create List<Value> for arguments: Arrays.asList(arg1, arg2, ...)
+                pushIntValue(plainArgs.size)
+                mv.visitTypeInsn(ANEWARRAY, VALUE_TYPE)
+                for ((index, arg) in plainArgs.withIndex()) {
+                    mv.visitInsn(DUP)
+                    pushIntValue(index)
+                    compileExpr(arg.expr)
+                    mv.visitInsn(AASTORE)
+                }
+                mv.visitMethodInsn(
+                    INVOKESTATIC,
+                    "java/util/Arrays",
+                    "asList",
+                    "([Ljava/lang/Object;)Ljava/util/List;",
+                    false
+                )
             }
-            mv.visitMethodInsn(
-                INVOKESTATIC,
-                "java/util/Arrays",
-                "asList",
-                "([Ljava/lang/Object;)Ljava/util/List;",
-                false
-            )
 
             // Cast callee to FunctionValue and invoke
             mv.visitInsn(SWAP) // Move args list below callee
@@ -1680,8 +1753,11 @@ private class LambdaExpressionGenerator(
         // Slot 0 is 'this', slot 1 is 'args' list
         nextSlot = 2
 
-        // Bind parameters: extract from args list
+        // Separate named params from rest param
         val namedParams = params.filterIsInstance<NamedParam>()
+        val restParam = params.filterIsInstance<RestParam>().firstOrNull()
+
+        // Bind named parameters: extract from args list
         for ((index, param) in namedParams.withIndex()) {
             // args.get(index) -> store in local slot
             mv.visitVarInsn(ALOAD, 1) // args
@@ -1697,6 +1773,39 @@ private class LambdaExpressionGenerator(
             val slot = nextSlot++
             mv.visitVarInsn(ASTORE, slot)
             declareBinding(param.name, slot, isMutable = false)
+        }
+
+        // Bind rest parameter: extract remaining arguments as a list
+        if (restParam != null) {
+            // args.subList(namedParams.size, args.size())
+            mv.visitVarInsn(ALOAD, 1) // args
+            pushInt(mv, namedParams.size)
+            mv.visitVarInsn(ALOAD, 1) // args
+            mv.visitMethodInsn(
+                INVOKEINTERFACE,
+                "java/util/List",
+                "size",
+                "()I",
+                true
+            )
+            mv.visitMethodInsn(
+                INVOKEINTERFACE,
+                "java/util/List",
+                "subList",
+                "(II)Ljava/util/List;",
+                true
+            )
+            // Convert java.util.List to ListValue
+            mv.visitMethodInsn(
+                INVOKESTATIC,
+                "santa/runtime/Operators",
+                "listFromJavaList",
+                "(Ljava/util/List;)L${LIST_VALUE_TYPE};",
+                false
+            )
+            val slot = nextSlot++
+            mv.visitVarInsn(ASTORE, slot)
+            declareBinding(restParam.name, slot, isMutable = false)
         }
     }
 
