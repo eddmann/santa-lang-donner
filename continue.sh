@@ -76,7 +76,7 @@ Begin by reading PLAN.md and identify the next incomplete release gate.
 PROMPT
 )
 
-echo -e "${CYAN}Starting Codex session...${NC}"
+echo -e "${CYAN}Starting Claude session...${NC}"
 echo ""
 
-codex --dangerously-bypass-approvals-and-sandbox --search --model gpt-5.2-codex -c model_reasoning_effort=\"high\" "$PROMPT"
+claude --dangerously-skip-permissions "$PROMPT"
