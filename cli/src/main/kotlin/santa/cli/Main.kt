@@ -1,8 +1,12 @@
 package santa.cli
 
 import santa.compiler.codegen.Compiler
+import santa.compiler.error.ErrorFormatter
+import santa.compiler.error.SantaException
+import santa.compiler.lexer.SourcePosition
 import santa.compiler.parser.Section
 import santa.compiler.parser.TestBlockExpr
+import santa.runtime.SantaRuntimeException
 import santa.runtime.value.*
 import java.io.File
 import kotlin.system.exitProcess
@@ -31,15 +35,24 @@ fun main(args: Array<String>) {
         exitProcess(1)
     }
 
-    try {
-        val source = file.readText()
+    val source = file.readText()
 
+    try {
         if (runTests) {
             runTestMode(source, includeSlow)
         } else {
             runNormalMode(source)
         }
+    } catch (e: SantaException) {
+        // Compile-time errors with source context
+        System.err.println(e.formatWithSource(source))
+        exitProcess(1)
+    } catch (e: SantaRuntimeException) {
+        // Runtime errors without source context (position not available)
+        System.err.println(ErrorFormatter.format(e.message ?: "Unknown error", null, null, "RuntimeError"))
+        exitProcess(1)
     } catch (e: Exception) {
+        // Unexpected errors
         System.err.println("Error: ${e.message}")
         exitProcess(1)
     }

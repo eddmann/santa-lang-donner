@@ -250,9 +250,9 @@ Release Gate 11
 LANG.txt: Section 15.5
 
 Release Gate 12
-- [ ] Errors include spans and stack traces
-- [ ] Runtime error vs nil behavior correct
-- [ ] Error messages clear and actionable
+- [x] Errors include spans and stack traces
+- [x] Runtime error vs nil behavior correct
+- [x] Error messages clear and actionable
 
 ---
 

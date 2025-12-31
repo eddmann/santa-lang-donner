@@ -1,8 +1,9 @@
 package santa.compiler.parser
 
+import santa.compiler.error.SantaException
 import santa.compiler.lexer.SourcePosition
 
 class ParseException(
     message: String,
-    val position: SourcePosition,
-) : RuntimeException(message)
+    position: SourcePosition,
+) : SantaException(message, position, "SyntaxError")

@@ -1,6 +1,7 @@
 package santa.compiler.codegen
 
 import santa.runtime.value.Value
+import java.lang.reflect.InvocationTargetException
 
 /**
  * A compiled santa-lang script ready for execution.
@@ -16,12 +17,19 @@ class CompiledScript(
 ) {
     /**
      * Execute the compiled script and return the result value.
+     *
+     * @throws SantaRuntimeException or other runtime exceptions from the script
      */
     fun execute(): Value {
         val loader = ScriptClassLoader(mainClassName, mainBytecode, lambdaClasses)
         val scriptClass = loader.loadClass(mainClassName)
         val executeMethod = scriptClass.getMethod("execute")
-        return executeMethod.invoke(null) as Value
+        return try {
+            executeMethod.invoke(null) as Value
+        } catch (e: InvocationTargetException) {
+            // Unwrap the actual exception thrown by the compiled code
+            throw e.cause ?: e
+        }
     }
 
     /**

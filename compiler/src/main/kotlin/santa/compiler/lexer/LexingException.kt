@@ -1,6 +1,8 @@
 package santa.compiler.lexer
 
+import santa.compiler.error.SantaException
+
 class LexingException(
     message: String,
-    val position: SourcePosition,
-) : RuntimeException(message)
+    position: SourcePosition,
+) : SantaException(message, position, "LexError")
