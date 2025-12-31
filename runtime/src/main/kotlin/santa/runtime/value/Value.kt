@@ -505,6 +505,15 @@ class MemoizedFunctionValue(private val wrapped: FunctionValue) : FunctionValue(
     override fun invoke(args: List<Value>): Value {
         return cache.getOrPut(args) { wrapped.invoke(args) }
     }
+
+    /**
+     * Forward setSelfRef to the wrapped function to support recursive memoization.
+     * This allows patterns like: `let fib = memoize |n| ... fib(n-1) ...`
+     * where `fib` calls go through the memoized wrapper.
+     */
+    override fun setSelfRef(self: Value) {
+        wrapped.setSelfRef(self)
+    }
 }
 
 /**

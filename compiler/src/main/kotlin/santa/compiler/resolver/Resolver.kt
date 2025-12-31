@@ -124,8 +124,10 @@ class Resolver(
 
     private fun resolveLetExpr(expr: LetExpr) {
         // For function bindings with simple names, declare the name first
-        // to allow recursive self-reference within the function body
-        val isRecursiveBinding = expr.value is FunctionExpr && expr.pattern is BindingPattern
+        // to allow recursive self-reference within the function body.
+        // This also applies to calls with function arguments (e.g., memoize |n| ... fib(n-1) ...)
+        val isRecursiveBinding = (expr.value is FunctionExpr || hasNestedFunctionArg(expr.value)) &&
+            expr.pattern is BindingPattern
         if (isRecursiveBinding) {
             declarePattern(expr.pattern)
         }
@@ -134,6 +136,18 @@ class Resolver(
 
         if (!isRecursiveBinding) {
             declarePattern(expr.pattern)
+        }
+    }
+
+    /**
+     * Check if an expression is a call with a function argument, which may need
+     * to reference the binding being defined (e.g., memoize |n| ... self(n-1) ...).
+     */
+    private fun hasNestedFunctionArg(expr: Expr): Boolean {
+        return when (expr) {
+            is CallExpr -> expr.arguments.any { it.expr is FunctionExpr || hasNestedFunctionArg(it.expr) }
+            is BinaryExpr -> hasNestedFunctionArg(expr.left) || hasNestedFunctionArg(expr.right)
+            else -> false
         }
     }
 

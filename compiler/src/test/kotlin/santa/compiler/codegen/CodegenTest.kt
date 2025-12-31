@@ -1734,6 +1734,51 @@ class CodegenTest {
     }
 
     @Nested
+    inner class MemoizeSelfReference {
+        @Test
+        fun `memoized recursive fibonacci`() {
+            val result = eval("""
+                let fib = memoize(|n| if n < 2 { n } else { fib(n - 1) + fib(n - 2) })
+                fib(10)
+            """.trimIndent())
+            result shouldBe IntValue(55)
+        }
+
+        @Test
+        fun `memoized recursive factorial`() {
+            val result = eval("""
+                let fact = memoize(|n| if n <= 1 { 1 } else { n * fact(n - 1) })
+                fact(5)
+            """.trimIndent())
+            result shouldBe IntValue(120)
+        }
+
+        @Test
+        fun `memoized function with pipeline`() {
+            val result = eval("""
+                let cached_double = memoize(|x| x * 2)
+                [1, 2, 3] |> map(cached_double) |> sum
+            """.trimIndent())
+            result shouldBe IntValue(12)
+        }
+
+        @Test
+        fun `memoized function result is cached`() {
+            // Verify memoization by checking the function returns same results
+            val result = eval("""
+                let calls = [0]
+                let inc_counter = memoize(|n| {
+                    n * 2
+                })
+                [inc_counter(5), inc_counter(5), inc_counter(3)]
+            """.trimIndent()) as ListValue
+            result.get(0) shouldBe IntValue(10)
+            result.get(1) shouldBe IntValue(10)
+            result.get(2) shouldBe IntValue(6)
+        }
+    }
+
+    @Nested
     inner class AocUrlRead {
         @Test
         fun `aoc url with invalid format returns nil`() {

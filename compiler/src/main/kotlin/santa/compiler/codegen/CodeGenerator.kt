@@ -681,34 +681,38 @@ private open class ExpressionGenerator(
             is BindingPattern -> {
                 val slot = allocateSlot()
 
-                // Check if this is a self-referential function binding
-                val funcExpr = expr.value as? FunctionExpr
-                val isSelfReferential = if (funcExpr != null) {
-                    val freeVars = findFreeVariables(funcExpr.body, funcExpr.params)
-                    pattern.name in freeVars
-                } else {
-                    false
-                }
+                // Check if this is a self-referential function binding.
+                // This can be a direct function (`let f = |x| ... f(...) ...`)
+                // or a call with a lambda that references the binding
+                // (`let f = memoize(|x| ... f(...) ...)`).
+                val isSelfReferential = isValueSelfReferential(expr.value, pattern.name)
 
                 if (isSelfReferential) {
                     // For self-referential functions, we need to:
                     // 1. Create a placeholder (nil) in the slot first
                     // 2. Declare the binding
-                    // 3. Compile the function (which will capture the slot)
-                    // 4. Store the function in the slot
-                    // 5. Update the closure's self-reference
+                    // 3. Compile the expression (which will capture the slot in any nested lambdas)
+                    // 4. Store the result in the slot
+                    // 5. For direct functions, update the closure's self-reference
 
                     // Push nil as placeholder and store
                     pushNil()
                     mv.visitVarInsn(ASTORE, slot)
 
-                    // Declare binding so the function can find it during compilation
+                    // Declare binding so functions can find it during compilation
                     declareBinding(pattern.name, slot, expr.isMutable)
 
-                    // Set context for self-reference and compile the function expression
+                    // Set context for self-reference and compile the expression
                     currentSelfRefName = pattern.name
-                    compileExpr(funcExpr!!)
+                    compileExpr(expr.value)
                     currentSelfRefName = null
+
+                    // For both direct and wrapped functions, we need to call setSelfRef.
+                    // For wrapped functions (like memoize), setSelfRef is forwarded to the
+                    // inner lambda, allowing recursive calls to go through the wrapper.
+
+                    // Cast to FunctionValue (memoize etc. return FunctionValue subclasses)
+                    mv.visitTypeInsn(CHECKCAST, FUNCTION_VALUE_TYPE)
 
                     // Duplicate the function value (one for storage, one for setSelfRef call)
                     mv.visitInsn(DUP)
@@ -1577,6 +1581,34 @@ private open class ExpressionGenerator(
             is ListPattern -> pattern.elements.flatMap { collectPatternBindings(it) }.toSet()
             is RestPattern -> if (pattern.name != null) setOf(pattern.name) else emptySet()
             is WildcardPattern, is LiteralPattern, is RangePattern -> emptySet()
+        }
+    }
+
+    /**
+     * Check if a value expression contains a self-referential binding.
+     * This is true for:
+     * - Direct function expression: `|x| ... name(x) ...`
+     * - Call with lambda argument: `memoize(|x| ... name(x) ...)`
+     * - Binary expression with lambda: `f >> (|x| ... name(x) ...)`
+     */
+    private fun isValueSelfReferential(value: Expr, name: String): Boolean {
+        return when (value) {
+            is FunctionExpr -> {
+                val freeVars = findFreeVariables(value.body, value.params)
+                name in freeVars
+            }
+            is CallExpr -> {
+                // Check if any argument is a lambda that references the name
+                value.arguments.any { arg ->
+                    isValueSelfReferential(arg.expr, name)
+                }
+            }
+            is BinaryExpr -> {
+                // Handle composition/pipeline with self-referential lambda
+                isValueSelfReferential(value.left, name) ||
+                    isValueSelfReferential(value.right, name)
+            }
+            else -> false
         }
     }
 
