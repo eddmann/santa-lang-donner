@@ -164,10 +164,10 @@ Release Gate 4
 LANG.txt: Section 3, 14.1
 
 Release Gate 5
-- [ ] Value types modeled (int, decimal, string, bool, nil, list, set, dict, lazy seq, function)
-- [ ] Truthy/falsy rules correct
-- [ ] Equality and hashing semantics correct
-- [ ] Grapheme-cluster indexing uses ICU4J
+- [x] Value types modeled (int, decimal, string, bool, nil, list, set, dict, lazy seq, function)
+- [x] Truthy/falsy rules correct
+- [x] Equality and hashing semantics correct
+- [x] Grapheme-cluster indexing uses ICU4J
 
 ---
 
