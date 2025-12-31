@@ -263,8 +263,8 @@ private open class ExpressionGenerator(
             is IdentifierExpr -> compileIdentifier(expr)
             is PlaceholderExpr -> TODO("Placeholders not yet implemented")
             is ListLiteralExpr -> compileListLiteral(expr)
-            is SetLiteralExpr -> TODO("Set literals not yet implemented")
-            is DictLiteralExpr -> TODO("Dict literals not yet implemented")
+            is SetLiteralExpr -> compileSetLiteral(expr)
+            is DictLiteralExpr -> compileDictLiteral(expr)
             is AssignmentExpr -> compileAssignment(expr)
             is LetExpr -> compileLetExpr(expr)
             is ReturnExpr -> TODO("Return expressions not yet implemented")
@@ -932,6 +932,81 @@ private open class ExpressionGenerator(
         )
     }
 
+    private fun compileSetLiteral(expr: SetLiteralExpr) {
+        // Create a new PersistentSet builder
+        mv.visitMethodInsn(
+            INVOKESTATIC,
+            "kotlinx/collections/immutable/ExtensionsKt",
+            "persistentSetOf",
+            "()Lkotlinx/collections/immutable/PersistentSet;",
+            false
+        )
+
+        // Add each element
+        for (element in expr.elements) {
+            when (element) {
+                is ExprElement -> {
+                    compileExpr(element.expr)
+                    mv.visitMethodInsn(
+                        INVOKEINTERFACE,
+                        "kotlinx/collections/immutable/PersistentSet",
+                        "add",
+                        "(Ljava/lang/Object;)Lkotlinx/collections/immutable/PersistentSet;",
+                        true
+                    )
+                }
+                is SpreadElement -> TODO("Spread in set literals not yet implemented")
+            }
+        }
+
+        // Wrap in SetValue
+        mv.visitMethodInsn(
+            INVOKESTATIC,
+            SET_VALUE_TYPE,
+            "box",
+            "(Lkotlinx/collections/immutable/PersistentSet;)L${SET_VALUE_TYPE};",
+            false
+        )
+    }
+
+    private fun compileDictLiteral(expr: DictLiteralExpr) {
+        // Create a new PersistentMap builder
+        mv.visitMethodInsn(
+            INVOKESTATIC,
+            "kotlinx/collections/immutable/ExtensionsKt",
+            "persistentMapOf",
+            "()Lkotlinx/collections/immutable/PersistentMap;",
+            false
+        )
+
+        // Add each entry
+        for (entry in expr.entries) {
+            when (entry) {
+                is KeyValueEntry -> {
+                    compileExpr(entry.key)
+                    compileExpr(entry.value)
+                    mv.visitMethodInsn(
+                        INVOKEINTERFACE,
+                        "kotlinx/collections/immutable/PersistentMap",
+                        "put",
+                        "(Ljava/lang/Object;Ljava/lang/Object;)Lkotlinx/collections/immutable/PersistentMap;",
+                        true
+                    )
+                }
+                is ShorthandEntry -> TODO("Shorthand entries in dict literals not yet implemented")
+            }
+        }
+
+        // Wrap in DictValue
+        mv.visitMethodInsn(
+            INVOKESTATIC,
+            DICT_VALUE_TYPE,
+            "box",
+            "(Lkotlinx/collections/immutable/PersistentMap;)L${DICT_VALUE_TYPE};",
+            false
+        )
+    }
+
     private fun compileIndex(expr: IndexExpr) {
         compileExpr(expr.target)
         compileExpr(expr.index)
@@ -1131,6 +1206,7 @@ private open class ExpressionGenerator(
             1 -> "(L${VALUE_TYPE};)L${VALUE_TYPE};"
             2 -> "(L${VALUE_TYPE};L${VALUE_TYPE};)L${VALUE_TYPE};"
             3 -> "(L${VALUE_TYPE};L${VALUE_TYPE};L${VALUE_TYPE};)L${VALUE_TYPE};"
+            4 -> "(L${VALUE_TYPE};L${VALUE_TYPE};L${VALUE_TYPE};L${VALUE_TYPE};)L${VALUE_TYPE};"
             else -> throw CodegenException("Builtin $name: too many arguments (${plainArgs.size})")
         }
 
@@ -1215,13 +1291,44 @@ private open class ExpressionGenerator(
         const val BOOL_VALUE_TYPE = "santa/runtime/value/BoolValue"
         const val NIL_VALUE_TYPE = "santa/runtime/value/NilValue"
         const val LIST_VALUE_TYPE = "santa/runtime/value/ListValue"
+        const val SET_VALUE_TYPE = "santa/runtime/value/SetValue"
+        const val DICT_VALUE_TYPE = "santa/runtime/value/DictValue"
         const val FUNCTION_VALUE_TYPE = "santa/runtime/value/FunctionValue"
         const val OPERATORS_TYPE = "santa/runtime/Operators"
         const val BUILTINS_TYPE = "santa/runtime/Builtins"
 
         val BUILTIN_FUNCTIONS = setOf(
+            // Existing core
             "size", "first", "rest", "push", "int", "type",
             "keys", "values", "abs",
+            // Type conversion
+            "ints", "list", "set", "dict",
+            // Collection access
+            "get", "second", "last",
+            // Collection modification
+            "assoc", "update", "update_d",
+            // Transformation
+            "map", "filter", "flat_map", "filter_map", "find_map",
+            // Reduction
+            "reduce", "fold", "scan", "each",
+            // Search
+            "find", "count",
+            // Aggregation
+            "sum", "max", "min",
+            // Sequence manipulation
+            "skip", "take", "sort", "reverse", "rotate", "chunk",
+            // Set operations
+            "union", "intersection",
+            // Predicates
+            "includes?", "excludes?", "any?", "all?",
+            // Lazy sequences
+            "repeat", "cycle", "iterate", "zip", "combinations", "range",
+            // String functions
+            "lines", "split", "upper", "lower", "replace", "join",
+            // Math
+            "signum", "vec_add",
+            // Utility
+            "id",
         )
     }
 }

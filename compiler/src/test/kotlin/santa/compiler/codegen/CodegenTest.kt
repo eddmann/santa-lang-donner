@@ -441,6 +441,291 @@ class CodegenTest {
         fun `abs of negative`() {
             eval("abs(-42)") shouldBe IntValue(42)
         }
+
+        // Type conversion tests
+        @Test
+        fun `ints extracts integers from string`() {
+            val result = eval("ints(\"x: 10, y: -5\")") as ListValue
+            result.size() shouldBe 2
+            result.get(0) shouldBe IntValue(10)
+            result.get(1) shouldBe IntValue(-5)
+        }
+
+        @Test
+        fun `list from set`() {
+            val result = eval("list({1, 2, 3})") as ListValue
+            result.size() shouldBe 3
+        }
+
+        @Test
+        fun `set from list removes duplicates`() {
+            val result = eval("set([1, 2, 2, 3])") as SetValue
+            result.size() shouldBe 3
+        }
+
+        @Test
+        fun `dict from list of tuples`() {
+            val result = eval("dict([[1, 2], [3, 4]])") as DictValue
+            result.get(IntValue(1)) shouldBe IntValue(2)
+            result.get(IntValue(3)) shouldBe IntValue(4)
+        }
+
+        // Collection access tests
+        @Test
+        fun `get from list`() {
+            eval("get(1, [10, 20, 30])") shouldBe IntValue(20)
+        }
+
+        @Test
+        fun `get from dict`() {
+            eval("get(1, #{1: 2, 3: 4})") shouldBe IntValue(2)
+        }
+
+        @Test
+        fun `second of list`() {
+            eval("second([1, 2, 3])") shouldBe IntValue(2)
+        }
+
+        @Test
+        fun `last of list`() {
+            eval("last([1, 2, 3])") shouldBe IntValue(3)
+        }
+
+        // Collection modification tests
+        @Test
+        fun `assoc replaces list element`() {
+            val result = eval("assoc(0, 10, [1, 2])") as ListValue
+            result.get(0) shouldBe IntValue(10)
+            result.get(1) shouldBe IntValue(2)
+        }
+
+        @Test
+        fun `assoc adds to dict`() {
+            val result = eval("assoc(5, 6, #{1: 2})") as DictValue
+            result.get(IntValue(5)) shouldBe IntValue(6)
+        }
+
+        @Test
+        fun `update uses function`() {
+            val result = eval("update(0, |x| x + 1, [10, 20])") as ListValue
+            result.get(0) shouldBe IntValue(11)
+        }
+
+        // Transformation tests
+        @Test
+        fun `map over list`() {
+            val result = eval("map(|x| x * 2, [1, 2, 3])") as ListValue
+            result.size() shouldBe 3
+            result.get(0) shouldBe IntValue(2)
+            result.get(1) shouldBe IntValue(4)
+            result.get(2) shouldBe IntValue(6)
+        }
+
+        @Test
+        fun `filter list`() {
+            val result = eval("filter(|x| x > 2, [1, 2, 3, 4])") as ListValue
+            result.size() shouldBe 2
+            result.get(0) shouldBe IntValue(3)
+            result.get(1) shouldBe IntValue(4)
+        }
+
+        @Test
+        fun `flat_map flattens results`() {
+            val result = eval("flat_map(|x| [x, x * 2], [1, 2])") as ListValue
+            result.size() shouldBe 4
+            result.get(0) shouldBe IntValue(1)
+            result.get(1) shouldBe IntValue(2)
+            result.get(2) shouldBe IntValue(2)
+            result.get(3) shouldBe IntValue(4)
+        }
+
+        // Reduction tests
+        @Test
+        fun `reduce sums list`() {
+            eval("reduce(|a, b| a + b, [1, 2, 3, 4])") shouldBe IntValue(10)
+        }
+
+        @Test
+        fun `fold with initial value`() {
+            eval("fold(10, |a, b| a + b, [1, 2, 3])") shouldBe IntValue(16)
+        }
+
+        @Test
+        fun `scan returns intermediate results`() {
+            val result = eval("scan(0, |a, b| a + b, [1, 2, 3])") as ListValue
+            result.size() shouldBe 3
+            result.get(0) shouldBe IntValue(1)
+            result.get(1) shouldBe IntValue(3)
+            result.get(2) shouldBe IntValue(6)
+        }
+
+        // Search tests
+        @Test
+        fun `find returns first match`() {
+            eval("find(|x| x > 2, [1, 2, 3, 4])") shouldBe IntValue(3)
+        }
+
+        @Test
+        fun `find returns nil when no match`() {
+            eval("find(|x| x > 10, [1, 2, 3])") shouldBe NilValue
+        }
+
+        @Test
+        fun `count matching elements`() {
+            eval("count(|x| x > 2, [1, 2, 3, 4, 5])") shouldBe IntValue(3)
+        }
+
+        // Aggregation tests
+        @Test
+        fun `sum of list`() {
+            eval("sum([1, 2, 3, 4])") shouldBe IntValue(10)
+        }
+
+        @Test
+        fun `max of list`() {
+            eval("max([3, 1, 4, 1, 5])") shouldBe IntValue(5)
+        }
+
+        @Test
+        fun `min of list`() {
+            eval("min([3, 1, 4, 1, 5])") shouldBe IntValue(1)
+        }
+
+        // Sequence manipulation tests
+        @Test
+        fun `skip drops elements`() {
+            val result = eval("skip(2, [1, 2, 3, 4])") as ListValue
+            result.size() shouldBe 2
+            result.get(0) shouldBe IntValue(3)
+            result.get(1) shouldBe IntValue(4)
+        }
+
+        @Test
+        fun `take limits elements`() {
+            val result = eval("take(2, [1, 2, 3, 4])") as ListValue
+            result.size() shouldBe 2
+            result.get(0) shouldBe IntValue(1)
+            result.get(1) shouldBe IntValue(2)
+        }
+
+        @Test
+        fun `reverse list`() {
+            val result = eval("reverse([1, 2, 3])") as ListValue
+            result.get(0) shouldBe IntValue(3)
+            result.get(1) shouldBe IntValue(2)
+            result.get(2) shouldBe IntValue(1)
+        }
+
+        @Test
+        fun `rotate list`() {
+            val result = eval("rotate(1, [1, 2, 3])") as ListValue
+            result.get(0) shouldBe IntValue(3)
+            result.get(1) shouldBe IntValue(1)
+            result.get(2) shouldBe IntValue(2)
+        }
+
+        @Test
+        fun `chunk splits list`() {
+            val result = eval("chunk(2, [1, 2, 3, 4, 5])") as ListValue
+            result.size() shouldBe 3
+            (result.get(0) as ListValue).size() shouldBe 2
+            (result.get(2) as ListValue).size() shouldBe 1
+        }
+
+        // Predicate tests
+        @Test
+        fun `includes? finds element`() {
+            eval("includes?([1, 2, 3], 2)") shouldBe BoolValue.TRUE
+            eval("includes?([1, 2, 3], 5)") shouldBe BoolValue.FALSE
+        }
+
+        @Test
+        fun `any? finds match`() {
+            eval("any?(|x| x > 2, [1, 2, 3])") shouldBe BoolValue.TRUE
+            eval("any?(|x| x > 10, [1, 2, 3])") shouldBe BoolValue.FALSE
+        }
+
+        @Test
+        fun `all? checks all`() {
+            eval("all?(|x| x > 0, [1, 2, 3])") shouldBe BoolValue.TRUE
+            eval("all?(|x| x > 2, [1, 2, 3])") shouldBe BoolValue.FALSE
+        }
+
+        // String function tests
+        @Test
+        fun `lines splits on newline`() {
+            val result = eval("lines(\"a\\nb\\nc\")") as ListValue
+            result.size() shouldBe 3
+            result.get(0) shouldBe StringValue("a")
+            result.get(1) shouldBe StringValue("b")
+            result.get(2) shouldBe StringValue("c")
+        }
+
+        @Test
+        fun `split by separator`() {
+            val result = eval("split(\",\", \"a,b,c\")") as ListValue
+            result.size() shouldBe 3
+            result.get(0) shouldBe StringValue("a")
+        }
+
+        @Test
+        fun `upper converts to uppercase`() {
+            eval("upper(\"hello\")") shouldBe StringValue("HELLO")
+        }
+
+        @Test
+        fun `lower converts to lowercase`() {
+            eval("lower(\"HELLO\")") shouldBe StringValue("hello")
+        }
+
+        @Test
+        fun `replace substitutes pattern`() {
+            eval("replace(\"o\", \"0\", \"hello\")") shouldBe StringValue("hell0")
+        }
+
+        @Test
+        fun `join combines elements`() {
+            eval("join(\", \", [1, 2, 3])") shouldBe StringValue("1, 2, 3")
+        }
+
+        // Math function tests
+        @Test
+        fun `signum of positive`() {
+            eval("signum(42)") shouldBe IntValue(1)
+        }
+
+        @Test
+        fun `signum of negative`() {
+            eval("signum(-42)") shouldBe IntValue(-1)
+        }
+
+        @Test
+        fun `signum of zero`() {
+            eval("signum(0)") shouldBe IntValue(0)
+        }
+
+        @Test
+        fun `vec_add adds vectors`() {
+            val result = eval("vec_add([1, 2], [3, 4])") as ListValue
+            result.get(0) shouldBe IntValue(4)
+            result.get(1) shouldBe IntValue(6)
+        }
+
+        // Utility tests
+        @Test
+        fun `id returns same value`() {
+            eval("id(42)") shouldBe IntValue(42)
+            eval("id(\"hello\")") shouldBe StringValue("hello")
+        }
+
+        // Int rounding tests
+        @Test
+        fun `int rounds half away from zero`() {
+            eval("int(3.5)") shouldBe IntValue(4)
+            eval("int(-3.5)") shouldBe IntValue(-4)
+            eval("int(3.7)") shouldBe IntValue(4)
+            eval("int(-3.7)") shouldBe IntValue(-4)
+        }
     }
 
     @Nested

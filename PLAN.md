@@ -214,9 +214,9 @@ Release Gate 8
 LANG.txt: Section 11 (core set)
 
 Release Gate 9
-- [ ] Numeric, string, and collection core built-ins
-- [ ] Error vs nil behavior matches spec
-- [ ] Built-in tests green
+- [x] Numeric, string, and collection core built-ins
+- [x] Error vs nil behavior matches spec
+- [x] Built-in tests green
 
 ---
 

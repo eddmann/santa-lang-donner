@@ -223,6 +223,11 @@ data class SetValue(val elements: PersistentSet<Value>) : Value {
     /** Difference of two sets: {1, 2, 3} - {2} -> {1, 3} */
     fun difference(other: SetValue): SetValue =
         SetValue(elements.removeAll(other.elements))
+
+    companion object {
+        @JvmStatic
+        fun box(elements: PersistentSet<Value>): SetValue = SetValue(elements)
+    }
 }
 
 /** Unordered key-value mapping (LANG.txt §3.7) */
@@ -255,6 +260,11 @@ data class DictValue(val entries: PersistentMap<Value, Value>) : Value {
     /** Get all values as a list (order not specified) */
     fun values(): ListValue =
         ListValue(entries.values.toPersistentList())
+
+    companion object {
+        @JvmStatic
+        fun box(entries: PersistentMap<Value, Value>): DictValue = DictValue(entries)
+    }
 }
 
 /**
@@ -428,6 +438,11 @@ class LazySequenceValue private constructor(
                 val tuple = iterators.map { it.next() }
                 yield(ListValue(tuple.toPersistentList()))
             }
+        }
+
+        /** Create a LazySequenceValue from an existing sequence. */
+        fun fromSequence(seq: Sequence<Value>): LazySequenceValue {
+            return LazySequenceValue { seq }
         }
     }
 

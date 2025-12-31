@@ -2,7 +2,12 @@ package santa.runtime
 
 import santa.runtime.value.*
 import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.persistentSetOf
 import kotlinx.collections.immutable.toPersistentList
+import kotlinx.collections.immutable.toPersistentSet
+import kotlinx.collections.immutable.persistentMapOf
+import java.math.RoundingMode
+import java.math.BigDecimal
 
 /**
  * Built-in functions for santa-lang.
@@ -61,11 +66,23 @@ object Builtins {
 
     /**
      * int(value) - Converts value to integer. Returns 0 for unparseable strings.
+     * Decimals are rounded to nearest, with half rounding away from zero.
      */
     @JvmStatic
     fun int(value: Value): Value = when (value) {
         is IntValue -> value
-        is DecimalValue -> IntValue(value.value.toLong())
+        is DecimalValue -> {
+            // Round half away from zero per LANG.txt
+            // For positive: 3.5 → 4 (use HALF_UP)
+            // For negative: -3.5 → -4 (use HALF_UP on absolute, then negate)
+            val d = value.value
+            val rounded = if (d >= 0) {
+                BigDecimal(d).setScale(0, RoundingMode.HALF_UP).toLong()
+            } else {
+                -BigDecimal(-d).setScale(0, RoundingMode.HALF_UP).toLong()
+            }
+            IntValue(rounded)
+        }
         is StringValue -> {
             val cleaned = value.value.trim().replace("_", "")
             IntValue(cleaned.toLongOrNull() ?: 0L)
@@ -108,11 +125,1319 @@ object Builtins {
         else -> throw SantaRuntimeException("abs: expected Integer or Decimal, got ${value.typeName()}")
     }
 
+    // =========================================================================
+    // Type Conversion Functions (LANG.txt §11.1)
+    // =========================================================================
+
+    /**
+     * ints(string) - Extract all parseable integers from a string using regex (-?[0-9]+).
+     */
+    @JvmStatic
+    fun ints(value: Value): Value = when (value) {
+        is StringValue -> {
+            val pattern = Regex("-?[0-9]+")
+            val matches = pattern.findAll(value.value)
+                .mapNotNull { it.value.toLongOrNull() }
+                .map { IntValue(it) as Value }
+                .toList()
+            ListValue(matches.toPersistentList())
+        }
+        else -> throw SantaRuntimeException("ints: expected String, got ${value.typeName()}")
+    }
+
+    /**
+     * list(value) - Convert to List representation.
+     */
+    @JvmStatic
+    fun list(value: Value): Value = when (value) {
+        is ListValue -> value
+        is SetValue -> ListValue(value.elements.toList().toPersistentList())
+        is DictValue -> {
+            // Dictionary returns list of [key, value] tuples
+            val tuples = value.entries.map { (k, v) ->
+                ListValue(persistentListOf(k, v))
+            }
+            ListValue(tuples.toPersistentList())
+        }
+        is StringValue -> {
+            // Each grapheme cluster becomes a string element
+            val graphemes = mutableListOf<Value>()
+            val iter = com.ibm.icu.text.BreakIterator.getCharacterInstance()
+            iter.setText(value.value)
+            var start = 0
+            var end = iter.next()
+            while (end != com.ibm.icu.text.BreakIterator.DONE) {
+                graphemes.add(StringValue(value.value.substring(start, end)))
+                start = end
+                end = iter.next()
+            }
+            ListValue(graphemes.toPersistentList())
+        }
+        is RangeValue -> {
+            if (value.isUnbounded()) {
+                throw SantaRuntimeException("list: cannot convert unbounded range to list")
+            }
+            ListValue(value.asSequence().toList().toPersistentList())
+        }
+        is LazySequenceValue -> throw SantaRuntimeException("list: cannot convert infinite LazySequence to list; use take() first")
+        else -> throw SantaRuntimeException("list: cannot convert ${value.typeName()} to List")
+    }
+
+    /**
+     * set(value) - Convert to Set representation.
+     */
+    @JvmStatic
+    fun set(value: Value): Value = when (value) {
+        is ListValue -> {
+            // Enforce hashability
+            for (elem in value.elements) {
+                if (!elem.isHashable()) {
+                    throw SantaRuntimeException("set: element ${elem.typeName()} is not hashable")
+                }
+            }
+            SetValue(value.elements.toPersistentSet())
+        }
+        is SetValue -> value
+        is StringValue -> {
+            // Each grapheme cluster becomes a string element in the set
+            val graphemes = mutableSetOf<Value>()
+            val iter = com.ibm.icu.text.BreakIterator.getCharacterInstance()
+            iter.setText(value.value)
+            var start = 0
+            var end = iter.next()
+            while (end != com.ibm.icu.text.BreakIterator.DONE) {
+                graphemes.add(StringValue(value.value.substring(start, end)))
+                start = end
+                end = iter.next()
+            }
+            SetValue(graphemes.toPersistentSet())
+        }
+        is RangeValue -> {
+            if (value.isUnbounded()) {
+                throw SantaRuntimeException("set: cannot convert unbounded range to set")
+            }
+            SetValue(value.asSequence().toList().toPersistentSet())
+        }
+        else -> throw SantaRuntimeException("set: cannot convert ${value.typeName()} to Set")
+    }
+
+    /**
+     * dict(value) - Convert to Dictionary representation.
+     * Accepts List of [key, value] tuples or Dictionary (identity).
+     */
+    @JvmStatic
+    fun dict(value: Value): Value = when (value) {
+        is DictValue -> value
+        is ListValue -> {
+            var result = persistentMapOf<Value, Value>()
+            for (elem in value.elements) {
+                if (elem !is ListValue || elem.size() != 2) {
+                    throw SantaRuntimeException("dict: expected list of [key, value] tuples")
+                }
+                val key = elem.get(0)
+                val v = elem.get(1)
+                if (!key.isHashable()) {
+                    throw SantaRuntimeException("dict: key ${key.typeName()} is not hashable")
+                }
+                result = result.put(key, v)
+            }
+            DictValue(result)
+        }
+        else -> throw SantaRuntimeException("dict: cannot convert ${value.typeName()} to Dictionary")
+    }
+
+    // =========================================================================
+    // Collection Access Functions (LANG.txt §11.2)
+    // =========================================================================
+
+    /**
+     * get(index, collection) - Get element at index. Returns nil if not found.
+     */
+    @JvmStatic
+    fun get(index: Value, collection: Value): Value = when (collection) {
+        is ListValue -> {
+            if (index !is IntValue) throw SantaRuntimeException("get: index must be Integer for List")
+            collection.get(index.value.toInt())
+        }
+        is SetValue -> {
+            // For sets, checks membership and returns value or nil
+            if (collection.contains(index)) index else NilValue
+        }
+        is DictValue -> collection.get(index)
+        is StringValue -> {
+            if (index !is IntValue) throw SantaRuntimeException("get: index must be Integer for String")
+            val grapheme = collection.graphemeAt(index.value.toInt())
+            if (grapheme != null) StringValue(grapheme) else NilValue
+        }
+        is RangeValue -> {
+            if (index !is IntValue) throw SantaRuntimeException("get: index must be Integer for Range")
+            val idx = index.value.toInt()
+            if (idx < 0) NilValue
+            else collection.asSequence().drop(idx).firstOrNull() ?: NilValue
+        }
+        is LazySequenceValue -> {
+            if (index !is IntValue) throw SantaRuntimeException("get: index must be Integer for LazySequence")
+            val idx = index.value.toInt()
+            if (idx < 0) NilValue
+            else collection.take(idx + 1).getOrNull(idx) ?: NilValue
+        }
+        else -> throw SantaRuntimeException("get: expected collection, got ${collection.typeName()}")
+    }
+
+    /**
+     * second(collection) - Get second element. Returns nil if fewer than 2 elements.
+     */
+    @JvmStatic
+    fun second(value: Value): Value = when (value) {
+        is ListValue -> value.get(1)
+        is SetValue -> {
+            val elements = value.elements.toList()
+            if (elements.size >= 2) elements[1] else NilValue
+        }
+        is StringValue -> {
+            val grapheme = value.graphemeAt(1)
+            if (grapheme != null) StringValue(grapheme) else NilValue
+        }
+        is RangeValue -> value.asSequence().drop(1).firstOrNull() ?: NilValue
+        is LazySequenceValue -> value.take(2).getOrNull(1) ?: NilValue
+        else -> throw SantaRuntimeException("second: expected collection, got ${value.typeName()}")
+    }
+
+    /**
+     * last(collection) - Get last element. Returns nil if empty.
+     */
+    @JvmStatic
+    fun last(value: Value): Value = when (value) {
+        is ListValue -> if (value.size() > 0) value.get(-1) else NilValue
+        is SetValue -> {
+            val elements = value.elements.toList()
+            if (elements.isNotEmpty()) elements.last() else NilValue
+        }
+        is StringValue -> {
+            val grapheme = value.graphemeAt(-1)
+            if (grapheme != null) StringValue(grapheme) else NilValue
+        }
+        is RangeValue -> {
+            if (value.isUnbounded()) {
+                throw SantaRuntimeException("last: cannot get last of unbounded range")
+            }
+            value.asSequence().lastOrNull() ?: NilValue
+        }
+        else -> throw SantaRuntimeException("last: expected List, Set, String, or bounded Range, got ${value.typeName()}")
+    }
+
+    // =========================================================================
+    // Collection Modification Functions (LANG.txt §11.3)
+    // =========================================================================
+
+    /**
+     * assoc(key, value, collection) - Associate key/index with value.
+     */
+    @JvmStatic
+    fun assoc(key: Value, newValue: Value, collection: Value): Value = when (collection) {
+        is ListValue -> {
+            if (key !is IntValue) throw SantaRuntimeException("assoc: index must be Integer for List")
+            val idx = key.value.toInt()
+            if (idx < 0) throw SantaRuntimeException("assoc: negative index not allowed")
+            // Fill with nil if index beyond current size
+            var elements = collection.elements
+            while (elements.size <= idx) {
+                elements = elements.add(NilValue)
+            }
+            ListValue(elements.set(idx, newValue))
+        }
+        is DictValue -> {
+            if (!key.isHashable()) {
+                throw SantaRuntimeException("assoc: key ${key.typeName()} is not hashable")
+            }
+            collection.put(key, newValue)
+        }
+        else -> throw SantaRuntimeException("assoc: expected List or Dictionary, got ${collection.typeName()}")
+    }
+
+    /**
+     * update(key, updater, collection) - Update using a pure updater function.
+     * The updater receives the current value (or nil if not present).
+     */
+    @JvmStatic
+    fun update(key: Value, updater: Value, collection: Value): Value {
+        if (updater !is FunctionValue) {
+            throw SantaRuntimeException("update: updater must be a Function")
+        }
+        return when (collection) {
+            is ListValue -> {
+                if (key !is IntValue) throw SantaRuntimeException("update: index must be Integer for List")
+                val idx = key.value.toInt()
+                if (idx < 0) throw SantaRuntimeException("update: negative index not allowed")
+                // Fill with nil if index beyond current size
+                var elements = collection.elements
+                while (elements.size <= idx) {
+                    elements = elements.add(NilValue)
+                }
+                val currentValue = elements[idx]
+                val newValue = updater.invoke(listOf(currentValue))
+                ListValue(elements.set(idx, newValue))
+            }
+            is DictValue -> {
+                if (!key.isHashable()) {
+                    throw SantaRuntimeException("update: key ${key.typeName()} is not hashable")
+                }
+                val currentValue = collection.get(key)
+                val newValue = updater.invoke(listOf(currentValue))
+                collection.put(key, newValue)
+            }
+            else -> throw SantaRuntimeException("update: expected List or Dictionary, got ${collection.typeName()}")
+        }
+    }
+
+    /**
+     * update_d(key, default, updater, collection) - Update with default value.
+     */
+    @JvmStatic
+    fun update_d(key: Value, default: Value, updater: Value, collection: Value): Value {
+        if (updater !is FunctionValue) {
+            throw SantaRuntimeException("update_d: updater must be a Function")
+        }
+        return when (collection) {
+            is ListValue -> {
+                if (key !is IntValue) throw SantaRuntimeException("update_d: index must be Integer for List")
+                val idx = key.value.toInt()
+                if (idx < 0) throw SantaRuntimeException("update_d: negative index not allowed")
+                // Fill with nil if index beyond current size
+                var elements = collection.elements
+                while (elements.size <= idx) {
+                    elements = elements.add(NilValue)
+                }
+                val currentValue = if (elements[idx] == NilValue) default else elements[idx]
+                val newValue = updater.invoke(listOf(currentValue))
+                ListValue(elements.set(idx, newValue))
+            }
+            is DictValue -> {
+                if (!key.isHashable()) {
+                    throw SantaRuntimeException("update_d: key ${key.typeName()} is not hashable")
+                }
+                val existing = collection.entries[key]
+                val currentValue = existing ?: default
+                val newValue = updater.invoke(listOf(currentValue))
+                collection.put(key, newValue)
+            }
+            else -> throw SantaRuntimeException("update_d: expected List or Dictionary, got ${collection.typeName()}")
+        }
+    }
+
+    // =========================================================================
+    // String Functions (LANG.txt §11.14)
+    // =========================================================================
+
+    /**
+     * lines(string) - Split string on newline characters.
+     */
+    @JvmStatic
+    fun lines(value: Value): Value = when (value) {
+        is StringValue -> {
+            val parts = value.value.split("\n").map { StringValue(it) as Value }
+            ListValue(parts.toPersistentList())
+        }
+        else -> throw SantaRuntimeException("lines: expected String, got ${value.typeName()}")
+    }
+
+    /**
+     * split(separator, string) - Split string by separator.
+     */
+    @JvmStatic
+    fun split(separator: Value, str: Value): Value {
+        if (separator !is StringValue) {
+            throw SantaRuntimeException("split: separator must be String")
+        }
+        if (str !is StringValue) {
+            throw SantaRuntimeException("split: second argument must be String")
+        }
+        val parts = if (separator.value.isEmpty()) {
+            // Split into individual grapheme clusters
+            val graphemes = mutableListOf<Value>()
+            val iter = com.ibm.icu.text.BreakIterator.getCharacterInstance()
+            iter.setText(str.value)
+            var start = 0
+            var end = iter.next()
+            while (end != com.ibm.icu.text.BreakIterator.DONE) {
+                graphemes.add(StringValue(str.value.substring(start, end)))
+                start = end
+                end = iter.next()
+            }
+            graphemes
+        } else {
+            str.value.split(separator.value).map { StringValue(it) as Value }
+        }
+        return ListValue(parts.toPersistentList())
+    }
+
+    /**
+     * upper(string) - Convert string to uppercase.
+     */
+    @JvmStatic
+    fun upper(value: Value): Value = when (value) {
+        is StringValue -> StringValue(value.value.uppercase())
+        else -> throw SantaRuntimeException("upper: expected String, got ${value.typeName()}")
+    }
+
+    /**
+     * lower(string) - Convert string to lowercase.
+     */
+    @JvmStatic
+    fun lower(value: Value): Value = when (value) {
+        is StringValue -> StringValue(value.value.lowercase())
+        else -> throw SantaRuntimeException("lower: expected String, got ${value.typeName()}")
+    }
+
+    /**
+     * replace(pattern, replacement, string) - Replace all occurrences.
+     */
+    @JvmStatic
+    fun replace(pattern: Value, replacement: Value, str: Value): Value {
+        if (pattern !is StringValue) {
+            throw SantaRuntimeException("replace: pattern must be String")
+        }
+        if (replacement !is StringValue) {
+            throw SantaRuntimeException("replace: replacement must be String")
+        }
+        if (str !is StringValue) {
+            throw SantaRuntimeException("replace: third argument must be String")
+        }
+        return StringValue(str.value.replace(pattern.value, replacement.value))
+    }
+
+    /**
+     * join(separator, collection) - Join collection elements with separator.
+     */
+    @JvmStatic
+    fun join(separator: Value, collection: Value): Value {
+        if (separator !is StringValue) {
+            throw SantaRuntimeException("join: separator must be String")
+        }
+        val elements = when (collection) {
+            is ListValue -> collection.elements
+            is SetValue -> collection.elements.toList()
+            else -> throw SantaRuntimeException("join: expected List or Set, got ${collection.typeName()}")
+        }
+        val strings = elements.map { elem ->
+            when (elem) {
+                is StringValue -> elem.value
+                is IntValue -> elem.value.toString()
+                is DecimalValue -> elem.value.toString()
+                is BoolValue -> elem.value.toString()
+                is NilValue -> "nil"
+                else -> elem.toString()
+            }
+        }
+        return StringValue(strings.joinToString(separator.value))
+    }
+
+    // =========================================================================
+    // Math Functions (LANG.txt §11.15)
+    // =========================================================================
+
+    /**
+     * signum(value) - Return sign: -1 (negative), 0 (zero), or 1 (positive).
+     */
+    @JvmStatic
+    fun signum(value: Value): Value = when (value) {
+        is IntValue -> IntValue(value.value.compareTo(0L).toLong())
+        is DecimalValue -> IntValue(value.value.compareTo(0.0).toLong())
+        else -> throw SantaRuntimeException("signum: expected Integer or Decimal, got ${value.typeName()}")
+    }
+
+    /**
+     * vec_add(a, b) - Vector addition: element-wise sum of two lists.
+     */
+    @JvmStatic
+    fun vec_add(a: Value, b: Value): Value {
+        if (a !is ListValue) throw SantaRuntimeException("vec_add: first argument must be List")
+        if (b !is ListValue) throw SantaRuntimeException("vec_add: second argument must be List")
+        val minLen = minOf(a.size(), b.size())
+        val result = (0 until minLen).map { i ->
+            Operators.add(a.get(i), b.get(i))
+        }
+        return ListValue(result.toPersistentList())
+    }
+
+    // =========================================================================
+    // Transformation Functions (LANG.txt §11.4)
+    // =========================================================================
+
+    /**
+     * map(mapper, collection) - Apply mapper to each element.
+     * Returns same collection type (except String -> List).
+     */
+    @JvmStatic
+    fun map(mapper: Value, collection: Value): Value {
+        if (mapper !is FunctionValue) {
+            throw SantaRuntimeException("map: mapper must be a Function")
+        }
+        return when (collection) {
+            is ListValue -> {
+                val result = collection.elements.map { mapper.invoke(listOf(it)) }
+                ListValue(result.toPersistentList())
+            }
+            is SetValue -> {
+                val result = collection.elements.map { mapper.invoke(listOf(it)) }
+                SetValue(result.toPersistentSet())
+            }
+            is DictValue -> {
+                // Mapper receives value (and optionally key)
+                var result = persistentMapOf<Value, Value>()
+                for ((k, v) in collection.entries) {
+                    val newValue = if (mapper.arity >= 2) {
+                        mapper.invoke(listOf(v, k))
+                    } else {
+                        mapper.invoke(listOf(v))
+                    }
+                    result = result.put(k, newValue)
+                }
+                DictValue(result)
+            }
+            is StringValue -> {
+                // Each grapheme cluster, returns List
+                val graphemes = toGraphemeList(collection.value)
+                val result = graphemes.map { mapper.invoke(listOf(StringValue(it))) }
+                ListValue(result.toPersistentList())
+            }
+            is RangeValue, is LazySequenceValue -> {
+                // Return lazy sequence
+                val seq = toSequence(collection)
+                LazySequenceValue.fromSequence(seq.map { mapper.invoke(listOf(it)) })
+            }
+            else -> throw SantaRuntimeException("map: expected collection, got ${collection.typeName()}")
+        }
+    }
+
+    /**
+     * filter(predicate, collection) - Keep elements where predicate is truthy.
+     */
+    @JvmStatic
+    fun filter(predicate: Value, collection: Value): Value {
+        if (predicate !is FunctionValue) {
+            throw SantaRuntimeException("filter: predicate must be a Function")
+        }
+        return when (collection) {
+            is ListValue -> {
+                val result = collection.elements.filter { predicate.invoke(listOf(it)).isTruthy() }
+                ListValue(result.toPersistentList())
+            }
+            is SetValue -> {
+                val result = collection.elements.filter { predicate.invoke(listOf(it)).isTruthy() }
+                SetValue(result.toPersistentSet())
+            }
+            is DictValue -> {
+                // Predicate receives value (and optionally key)
+                var result = persistentMapOf<Value, Value>()
+                for ((k, v) in collection.entries) {
+                    val keep = if (predicate.arity >= 2) {
+                        predicate.invoke(listOf(v, k))
+                    } else {
+                        predicate.invoke(listOf(v))
+                    }
+                    if (keep.isTruthy()) {
+                        result = result.put(k, v)
+                    }
+                }
+                DictValue(result)
+            }
+            is StringValue -> {
+                // Each grapheme cluster, returns List
+                val graphemes = toGraphemeList(collection.value)
+                val result = graphemes.filter { predicate.invoke(listOf(StringValue(it))).isTruthy() }
+                    .map { StringValue(it) as Value }
+                ListValue(result.toPersistentList())
+            }
+            is RangeValue, is LazySequenceValue -> {
+                // Return lazy sequence
+                val seq = toSequence(collection)
+                LazySequenceValue.fromSequence(seq.filter { predicate.invoke(listOf(it)).isTruthy() })
+            }
+            else -> throw SantaRuntimeException("filter: expected collection, got ${collection.typeName()}")
+        }
+    }
+
+    /**
+     * flat_map(mapper, collection) - Map and flatten results.
+     */
+    @JvmStatic
+    fun flat_map(mapper: Value, collection: Value): Value {
+        if (mapper !is FunctionValue) {
+            throw SantaRuntimeException("flat_map: mapper must be a Function")
+        }
+        val items = when (collection) {
+            is ListValue -> collection.elements.asSequence()
+            is SetValue -> collection.elements.asSequence()
+            is DictValue -> collection.entries.values.asSequence()
+            is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
+            is RangeValue -> collection.asSequence()
+            is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
+            else -> throw SantaRuntimeException("flat_map: expected collection, got ${collection.typeName()}")
+        }
+        val result = items.flatMap { item ->
+            val mapped = mapper.invoke(listOf(item))
+            when (mapped) {
+                is ListValue -> mapped.elements.asSequence()
+                is SetValue -> mapped.elements.asSequence()
+                else -> sequenceOf(mapped)
+            }
+        }.toList()
+        return ListValue(result.toPersistentList())
+    }
+
+    /**
+     * filter_map(mapper, collection) - Map and keep only truthy results.
+     */
+    @JvmStatic
+    fun filter_map(mapper: Value, collection: Value): Value {
+        if (mapper !is FunctionValue) {
+            throw SantaRuntimeException("filter_map: mapper must be a Function")
+        }
+        return when (collection) {
+            is ListValue -> {
+                val result = collection.elements.mapNotNull { elem ->
+                    val mapped = mapper.invoke(listOf(elem))
+                    if (mapped.isTruthy()) mapped else null
+                }
+                ListValue(result.toPersistentList())
+            }
+            is SetValue -> {
+                val result = collection.elements.mapNotNull { elem ->
+                    val mapped = mapper.invoke(listOf(elem))
+                    if (mapped.isTruthy()) mapped else null
+                }
+                SetValue(result.toPersistentSet())
+            }
+            is DictValue -> {
+                val result = collection.entries.mapNotNull { (k, v) ->
+                    val mapped = if (mapper.arity >= 2) {
+                        mapper.invoke(listOf(v, k))
+                    } else {
+                        mapper.invoke(listOf(v))
+                    }
+                    if (mapped.isTruthy()) k to mapped else null
+                }
+                DictValue(result.fold(persistentMapOf()) { acc, (k, v) -> acc.put(k, v) })
+            }
+            is StringValue -> {
+                val graphemes = toGraphemeList(collection.value)
+                val result = graphemes.mapNotNull { g ->
+                    val mapped = mapper.invoke(listOf(StringValue(g)))
+                    if (mapped.isTruthy()) mapped else null
+                }
+                ListValue(result.toPersistentList())
+            }
+            is RangeValue, is LazySequenceValue -> {
+                val seq = toSequence(collection)
+                LazySequenceValue.fromSequence(seq.mapNotNull { elem ->
+                    val mapped = mapper.invoke(listOf(elem))
+                    if (mapped.isTruthy()) mapped else null
+                })
+            }
+            else -> throw SantaRuntimeException("filter_map: expected collection, got ${collection.typeName()}")
+        }
+    }
+
+    /**
+     * find_map(mapper, collection) - Find first element where mapper returns truthy, return that mapped value.
+     */
+    @JvmStatic
+    fun find_map(mapper: Value, collection: Value): Value {
+        if (mapper !is FunctionValue) {
+            throw SantaRuntimeException("find_map: mapper must be a Function")
+        }
+        val items: Sequence<Value> = when (collection) {
+            is ListValue -> collection.elements.asSequence()
+            is SetValue -> collection.elements.asSequence()
+            is DictValue -> {
+                // For dict, we need to handle value,key pairs
+                return collection.entries.entries.firstNotNullOfOrNull { (k, v) ->
+                    val mapped = if (mapper.arity >= 2) {
+                        mapper.invoke(listOf(v, k))
+                    } else {
+                        mapper.invoke(listOf(v))
+                    }
+                    if (mapped.isTruthy()) mapped else null
+                } ?: NilValue
+            }
+            is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
+            is RangeValue -> collection.asSequence()
+            is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
+            else -> throw SantaRuntimeException("find_map: expected collection, got ${collection.typeName()}")
+        }
+        return items.firstNotNullOfOrNull { elem ->
+            val mapped = mapper.invoke(listOf(elem))
+            if (mapped.isTruthy()) mapped else null
+        } ?: NilValue
+    }
+
+    // =========================================================================
+    // Reduction Functions (LANG.txt §11.5)
+    // =========================================================================
+
+    /**
+     * reduce(reducer, collection) - Reduce using first element as initial accumulator.
+     * Throws RuntimeErr if collection is empty.
+     */
+    @JvmStatic
+    fun reduce(reducer: Value, collection: Value): Value {
+        if (reducer !is FunctionValue) {
+            throw SantaRuntimeException("reduce: reducer must be a Function")
+        }
+        val items = toList(collection)
+        if (items.isEmpty()) {
+            throw SantaRuntimeException("reduce: cannot reduce empty collection")
+        }
+        return items.drop(1).fold(items.first()) { acc, elem ->
+            reducer.invoke(listOf(acc, elem))
+        }
+    }
+
+    /**
+     * fold(initial, folder, collection) - Fold with explicit initial value.
+     */
+    @JvmStatic
+    fun fold(initial: Value, folder: Value, collection: Value): Value {
+        if (folder !is FunctionValue) {
+            throw SantaRuntimeException("fold: folder must be a Function")
+        }
+        val items = when (collection) {
+            is ListValue -> collection.elements.asSequence()
+            is SetValue -> collection.elements.asSequence()
+            is DictValue -> {
+                // Folder receives acc, value (and optionally key)
+                return collection.entries.entries.fold(initial) { acc, (k, v) ->
+                    if (folder.arity >= 3) {
+                        folder.invoke(listOf(acc, v, k))
+                    } else {
+                        folder.invoke(listOf(acc, v))
+                    }
+                }
+            }
+            is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
+            is RangeValue -> collection.asSequence()
+            is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
+            else -> throw SantaRuntimeException("fold: expected collection, got ${collection.typeName()}")
+        }
+        return items.fold(initial) { acc, elem ->
+            folder.invoke(listOf(acc, elem))
+        }
+    }
+
+    /**
+     * scan(initial, folder, collection) - Return all intermediate fold results.
+     */
+    @JvmStatic
+    fun scan(initial: Value, folder: Value, collection: Value): Value {
+        if (folder !is FunctionValue) {
+            throw SantaRuntimeException("scan: folder must be a Function")
+        }
+        val items = when (collection) {
+            is ListValue -> collection.elements.toList()
+            is SetValue -> collection.elements.toList()
+            is DictValue -> {
+                // Folder receives acc, value (and optionally key)
+                val results = mutableListOf<Value>()
+                var acc = initial
+                for ((k, v) in collection.entries) {
+                    acc = if (folder.arity >= 3) {
+                        folder.invoke(listOf(acc, v, k))
+                    } else {
+                        folder.invoke(listOf(acc, v))
+                    }
+                    results.add(acc)
+                }
+                return ListValue(results.toPersistentList())
+            }
+            is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }
+            is RangeValue -> collection.asSequence().toList()
+            else -> throw SantaRuntimeException("scan: expected collection, got ${collection.typeName()}")
+        }
+        val results = mutableListOf<Value>()
+        var acc = initial
+        for (elem in items) {
+            acc = folder.invoke(listOf(acc, elem))
+            results.add(acc)
+        }
+        return ListValue(results.toPersistentList())
+    }
+
+    /**
+     * each(side_effect, collection) - Apply side-effecting function to each element. Returns nil.
+     */
+    @JvmStatic
+    fun each(sideEffect: Value, collection: Value): Value {
+        if (sideEffect !is FunctionValue) {
+            throw SantaRuntimeException("each: function must be a Function")
+        }
+        val items = when (collection) {
+            is ListValue -> collection.elements.asSequence()
+            is SetValue -> collection.elements.asSequence()
+            is DictValue -> {
+                // Function receives value (and optionally key)
+                for ((k, v) in collection.entries) {
+                    if (sideEffect.arity >= 2) {
+                        sideEffect.invoke(listOf(v, k))
+                    } else {
+                        sideEffect.invoke(listOf(v))
+                    }
+                }
+                return NilValue
+            }
+            is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
+            is RangeValue -> collection.asSequence()
+            is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
+            else -> throw SantaRuntimeException("each: expected collection, got ${collection.typeName()}")
+        }
+        for (elem in items) {
+            sideEffect.invoke(listOf(elem))
+        }
+        return NilValue
+    }
+
+    // =========================================================================
+    // Search Functions (LANG.txt §11.7)
+    // =========================================================================
+
+    /**
+     * find(predicate, collection) - Find first element where predicate is truthy.
+     */
+    @JvmStatic
+    fun find(predicate: Value, collection: Value): Value {
+        if (predicate !is FunctionValue) {
+            throw SantaRuntimeException("find: predicate must be a Function")
+        }
+        val items: Sequence<Value> = when (collection) {
+            is ListValue -> collection.elements.asSequence()
+            is SetValue -> collection.elements.asSequence()
+            is DictValue -> {
+                // Predicate receives value (and optionally key)
+                for ((k, v) in collection.entries) {
+                    val result = if (predicate.arity >= 2) {
+                        predicate.invoke(listOf(v, k))
+                    } else {
+                        predicate.invoke(listOf(v))
+                    }
+                    if (result.isTruthy()) return v
+                }
+                return NilValue
+            }
+            is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
+            is RangeValue -> collection.asSequence()
+            is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
+            else -> throw SantaRuntimeException("find: expected collection, got ${collection.typeName()}")
+        }
+        return items.find { predicate.invoke(listOf(it)).isTruthy() } ?: NilValue
+    }
+
+    /**
+     * count(predicate, collection) - Count elements where predicate is truthy.
+     */
+    @JvmStatic
+    fun count(predicate: Value, collection: Value): Value {
+        if (predicate !is FunctionValue) {
+            throw SantaRuntimeException("count: predicate must be a Function")
+        }
+        val c = when (collection) {
+            is ListValue -> collection.elements.count { predicate.invoke(listOf(it)).isTruthy() }
+            is SetValue -> collection.elements.count { predicate.invoke(listOf(it)).isTruthy() }
+            is DictValue -> {
+                collection.entries.count { (k, v) ->
+                    val result = if (predicate.arity >= 2) {
+                        predicate.invoke(listOf(v, k))
+                    } else {
+                        predicate.invoke(listOf(v))
+                    }
+                    result.isTruthy()
+                }
+            }
+            is StringValue -> toGraphemeList(collection.value).count {
+                predicate.invoke(listOf(StringValue(it))).isTruthy()
+            }
+            is RangeValue -> collection.asSequence().count { predicate.invoke(listOf(it)).isTruthy() }
+            else -> throw SantaRuntimeException("count: expected collection, got ${collection.typeName()}")
+        }
+        return IntValue(c.toLong())
+    }
+
+    // =========================================================================
+    // Aggregation Functions (LANG.txt §11.8)
+    // =========================================================================
+
+    /**
+     * sum(collection) - Sum all numeric elements. Returns 0 for empty collections.
+     */
+    @JvmStatic
+    fun sum(collection: Value): Value {
+        val items = when (collection) {
+            is ListValue -> collection.elements
+            is SetValue -> collection.elements.toList()
+            is DictValue -> collection.entries.values.toList()
+            is RangeValue -> collection.asSequence().toList()
+            else -> throw SantaRuntimeException("sum: expected collection, got ${collection.typeName()}")
+        }
+        if (items.isEmpty()) return IntValue(0)
+
+        var hasDecimal = false
+        var intSum = 0L
+        var decSum = 0.0
+
+        for (item in items) {
+            when (item) {
+                is IntValue -> {
+                    if (hasDecimal) decSum += item.value else intSum += item.value
+                }
+                is DecimalValue -> {
+                    if (!hasDecimal) {
+                        hasDecimal = true
+                        decSum = intSum.toDouble()
+                    }
+                    decSum += item.value
+                }
+                else -> throw SantaRuntimeException("sum: expected numeric elements, got ${item.typeName()}")
+            }
+        }
+        return if (hasDecimal) DecimalValue(decSum) else IntValue(intSum)
+    }
+
+    /**
+     * max(..values) - Find maximum. Can be called with multiple args or single collection.
+     */
+    @JvmStatic
+    fun max(value: Value): Value {
+        val items = when (value) {
+            is ListValue -> value.elements
+            is SetValue -> value.elements.toList()
+            is DictValue -> value.entries.values.toList()
+            is RangeValue -> value.asSequence().toList()
+            else -> throw SantaRuntimeException("max: expected collection, got ${value.typeName()}")
+        }
+        if (items.isEmpty()) return NilValue
+        return items.maxWithOrNull { a, b -> Operators.compare(a, b) } ?: NilValue
+    }
+
+    /**
+     * min(..values) - Find minimum. Can be called with multiple args or single collection.
+     */
+    @JvmStatic
+    fun min(value: Value): Value {
+        val items = when (value) {
+            is ListValue -> value.elements
+            is SetValue -> value.elements.toList()
+            is DictValue -> value.entries.values.toList()
+            is RangeValue -> value.asSequence().toList()
+            else -> throw SantaRuntimeException("min: expected collection, got ${value.typeName()}")
+        }
+        if (items.isEmpty()) return NilValue
+        return items.minWithOrNull { a, b -> Operators.compare(a, b) } ?: NilValue
+    }
+
+    // =========================================================================
+    // Sequence Manipulation Functions (LANG.txt §11.9)
+    // =========================================================================
+
+    /**
+     * skip(n, collection) - Skip first n elements.
+     */
+    @JvmStatic
+    fun skip(n: Value, collection: Value): Value {
+        if (n !is IntValue) throw SantaRuntimeException("skip: first argument must be Integer")
+        val count = n.value.toInt()
+        return when (collection) {
+            is ListValue -> ListValue(collection.elements.drop(count).toPersistentList())
+            is SetValue -> SetValue(collection.elements.drop(count).toPersistentSet())
+            is RangeValue -> ListValue(collection.asSequence().drop(count).toList().toPersistentList())
+            is LazySequenceValue -> {
+                val remaining = collection.take(Int.MAX_VALUE).drop(count)
+                ListValue(remaining.toPersistentList())
+            }
+            else -> throw SantaRuntimeException("skip: expected collection, got ${collection.typeName()}")
+        }
+    }
+
+    /**
+     * take(n, collection) - Take first n elements.
+     */
+    @JvmStatic
+    fun take(n: Value, collection: Value): Value {
+        if (n !is IntValue) throw SantaRuntimeException("take: first argument must be Integer")
+        val count = n.value.toInt()
+        return when (collection) {
+            is ListValue -> ListValue(collection.elements.take(count).toPersistentList())
+            is SetValue -> ListValue(collection.elements.take(count).toPersistentList())
+            is RangeValue -> ListValue(collection.asSequence().take(count).toList().toPersistentList())
+            is LazySequenceValue -> ListValue(collection.take(count).toPersistentList())
+            else -> throw SantaRuntimeException("take: expected collection, got ${collection.typeName()}")
+        }
+    }
+
+    /**
+     * sort(comparator, collection) - Sort by comparator function.
+     */
+    @JvmStatic
+    fun sort(comparator: Value, collection: Value): Value {
+        if (comparator !is FunctionValue) {
+            throw SantaRuntimeException("sort: comparator must be a Function")
+        }
+        if (collection !is ListValue) {
+            throw SantaRuntimeException("sort: expected List, got ${collection.typeName()}")
+        }
+        val sorted = collection.elements.sortedWith { a, b ->
+            val result = comparator.invoke(listOf(a, b))
+            when (result) {
+                is BoolValue -> if (result.value) 1 else -1  // true = a comes after b
+                is IntValue -> result.value.toInt()
+                else -> 0
+            }
+        }
+        return ListValue(sorted.toPersistentList())
+    }
+
+    /**
+     * reverse(collection) - Reverse order.
+     */
+    @JvmStatic
+    fun reverse(collection: Value): Value = when (collection) {
+        is ListValue -> ListValue(collection.elements.reversed().toPersistentList())
+        is StringValue -> {
+            val graphemes = toGraphemeList(collection.value)
+            StringValue(graphemes.reversed().joinToString(""))
+        }
+        is RangeValue -> ListValue(collection.asSequence().toList().reversed().map { it }.toPersistentList())
+        else -> throw SantaRuntimeException("reverse: expected List, String, or Range, got ${collection.typeName()}")
+    }
+
+    /**
+     * rotate(steps, collection) - Rotate list by n steps.
+     * Positive = forward (last moves to start), Negative = backward (first moves to end).
+     */
+    @JvmStatic
+    fun rotate(steps: Value, collection: Value): Value {
+        if (steps !is IntValue) throw SantaRuntimeException("rotate: first argument must be Integer")
+        if (collection !is ListValue) throw SantaRuntimeException("rotate: expected List, got ${collection.typeName()}")
+
+        val n = steps.value.toInt()
+        val size = collection.size()
+        if (size == 0) return collection
+
+        val normalizedN = ((n % size) + size) % size
+        if (normalizedN == 0) return collection
+
+        // Positive rotation: last n elements move to front
+        val splitPoint = size - normalizedN
+        val result = collection.elements.drop(splitPoint) + collection.elements.take(splitPoint)
+        return ListValue(result.toPersistentList())
+    }
+
+    /**
+     * chunk(size, collection) - Split into chunks of given size.
+     */
+    @JvmStatic
+    fun chunk(chunkSize: Value, collection: Value): Value {
+        if (chunkSize !is IntValue) throw SantaRuntimeException("chunk: first argument must be Integer")
+        if (collection !is ListValue) throw SantaRuntimeException("chunk: expected List, got ${collection.typeName()}")
+
+        val size = chunkSize.value.toInt()
+        if (size <= 0) throw SantaRuntimeException("chunk: size must be positive")
+
+        val chunks = collection.elements.chunked(size) { chunk ->
+            ListValue(chunk.toPersistentList()) as Value
+        }
+        return ListValue(chunks.toPersistentList())
+    }
+
+    // =========================================================================
+    // Set Operations (LANG.txt §11.10)
+    // =========================================================================
+
+    /**
+     * union(..values) - Elements in any collection.
+     */
+    @JvmStatic
+    fun union(value: Value): Value {
+        // Handle both single list of collections and single collection
+        val collections = when (value) {
+            is ListValue -> {
+                // Check if it's a list of collections
+                if (value.elements.isNotEmpty() && value.elements.first() is ListValue ||
+                    value.elements.isNotEmpty() && value.elements.first() is SetValue) {
+                    value.elements.toList()
+                } else {
+                    listOf(value)
+                }
+            }
+            else -> listOf(value)
+        }
+
+        val result = mutableSetOf<Value>()
+        for (coll in collections) {
+            val items = when (coll) {
+                is ListValue -> coll.elements
+                is SetValue -> coll.elements
+                is StringValue -> toGraphemeList(coll.value).map { StringValue(it) }
+                is RangeValue -> coll.asSequence().toList()
+                else -> throw SantaRuntimeException("union: expected collection, got ${coll.typeName()}")
+            }
+            result.addAll(items)
+        }
+        return SetValue(result.toPersistentSet())
+    }
+
+    /**
+     * intersection(..values) - Elements in all collections.
+     */
+    @JvmStatic
+    fun intersection(value: Value): Value {
+        val collections = when (value) {
+            is ListValue -> {
+                if (value.elements.isNotEmpty() && (value.elements.first() is ListValue ||
+                    value.elements.first() is SetValue)) {
+                    value.elements.toList()
+                } else {
+                    listOf(value)
+                }
+            }
+            else -> listOf(value)
+        }
+
+        if (collections.isEmpty()) return SetValue(persistentSetOf())
+
+        val sets = collections.map { coll ->
+            when (coll) {
+                is ListValue -> coll.elements.toSet()
+                is SetValue -> coll.elements.toSet()
+                is RangeValue -> coll.asSequence().toSet()
+                else -> throw SantaRuntimeException("intersection: expected collection, got ${coll.typeName()}")
+            }
+        }
+
+        val result = sets.reduce { acc, set -> acc.intersect(set) }
+        return SetValue(result.toPersistentSet())
+    }
+
+    // =========================================================================
+    // Predicate Functions (LANG.txt §11.11)
+    // =========================================================================
+
+    /**
+     * includes?(collection, value) - Check if value is in collection.
+     */
+    @JvmStatic
+    fun `includes?`(collection: Value, value: Value): Value {
+        val found = when (collection) {
+            is ListValue -> collection.elements.contains(value)
+            is SetValue -> collection.contains(value)
+            is DictValue -> collection.entries.containsKey(value)  // Checks keys
+            is StringValue -> {
+                if (value !is StringValue) false
+                else collection.value.contains(value.value)
+            }
+            is RangeValue -> {
+                if (value !is IntValue) false
+                else collection.asSequence().any { it == value }
+            }
+            is LazySequenceValue -> collection.take(Int.MAX_VALUE).contains(value)
+            else -> throw SantaRuntimeException("includes?: expected collection, got ${collection.typeName()}")
+        }
+        return BoolValue.box(found)
+    }
+
+    /**
+     * excludes?(collection, value) - Check if value is NOT in collection.
+     */
+    @JvmStatic
+    fun `excludes?`(collection: Value, value: Value): Value {
+        val included = `includes?`(collection, value)
+        return BoolValue.box(!(included as BoolValue).value)
+    }
+
+    /**
+     * any?(predicate, collection) - Check if any element matches predicate.
+     */
+    @JvmStatic
+    fun `any?`(predicate: Value, collection: Value): Value {
+        if (predicate !is FunctionValue) {
+            throw SantaRuntimeException("any?: predicate must be a Function")
+        }
+        val found = when (collection) {
+            is ListValue -> collection.elements.any { predicate.invoke(listOf(it)).isTruthy() }
+            is SetValue -> collection.elements.any { predicate.invoke(listOf(it)).isTruthy() }
+            is StringValue -> toGraphemeList(collection.value).any {
+                predicate.invoke(listOf(StringValue(it))).isTruthy()
+            }
+            is RangeValue -> collection.asSequence().any { predicate.invoke(listOf(it)).isTruthy() }
+            is LazySequenceValue -> collection.take(Int.MAX_VALUE).any { predicate.invoke(listOf(it)).isTruthy() }
+            else -> throw SantaRuntimeException("any?: expected collection, got ${collection.typeName()}")
+        }
+        return BoolValue.box(found)
+    }
+
+    /**
+     * all?(predicate, collection) - Check if all elements match predicate.
+     */
+    @JvmStatic
+    fun `all?`(predicate: Value, collection: Value): Value {
+        if (predicate !is FunctionValue) {
+            throw SantaRuntimeException("all?: predicate must be a Function")
+        }
+        val allMatch = when (collection) {
+            is ListValue -> collection.elements.all { predicate.invoke(listOf(it)).isTruthy() }
+            is SetValue -> collection.elements.all { predicate.invoke(listOf(it)).isTruthy() }
+            is StringValue -> toGraphemeList(collection.value).all {
+                predicate.invoke(listOf(StringValue(it))).isTruthy()
+            }
+            is RangeValue -> collection.asSequence().all { predicate.invoke(listOf(it)).isTruthy() }
+            else -> throw SantaRuntimeException("all?: expected bounded collection, got ${collection.typeName()}")
+        }
+        return BoolValue.box(allMatch)
+    }
+
+    // =========================================================================
+    // Lazy Sequence Generation (LANG.txt §11.12)
+    // =========================================================================
+
+    /**
+     * repeat(value) - Generate infinite sequence repeating value.
+     */
+    @JvmStatic
+    fun repeat(value: Value): Value = LazySequenceValue.repeat(value)
+
+    /**
+     * cycle(collection) - Generate infinite sequence cycling through collection.
+     */
+    @JvmStatic
+    fun cycle(collection: Value): Value = when (collection) {
+        is ListValue -> LazySequenceValue.cycle(collection.elements.toList())
+        is StringValue -> LazySequenceValue.cycle(toGraphemeList(collection.value).map { StringValue(it) })
+        else -> throw SantaRuntimeException("cycle: expected List or String, got ${collection.typeName()}")
+    }
+
+    /**
+     * iterate(generator, initial) - Generate sequence by repeatedly applying function.
+     */
+    @JvmStatic
+    fun iterate(generator: Value, initial: Value): Value {
+        if (generator !is FunctionValue) {
+            throw SantaRuntimeException("iterate: generator must be a Function")
+        }
+        return LazySequenceValue.iterate(initial) { generator.invoke(listOf(it)) }
+    }
+
+    /**
+     * zip(collection, ..collections) - Aggregate into tuples.
+     */
+    @JvmStatic
+    fun zip(collection: Value): Value = when (collection) {
+        is ListValue -> LazySequenceValue.zip(collection.elements.toList())
+        else -> LazySequenceValue.zip(listOf(collection))
+    }
+
+    /**
+     * combinations(size, collection) - Generate all combinations of given size.
+     */
+    @JvmStatic
+    fun combinations(size: Value, collection: Value): Value {
+        if (size !is IntValue) throw SantaRuntimeException("combinations: first argument must be Integer")
+        if (collection !is ListValue) throw SantaRuntimeException("combinations: expected List, got ${collection.typeName()}")
+
+        val k = size.value.toInt()
+        val items = collection.elements.toList()
+
+        fun generateCombinations(start: Int, current: List<Value>): Sequence<Value> = sequence {
+            if (current.size == k) {
+                yield(ListValue(current.toPersistentList()))
+            } else {
+                for (i in start until items.size) {
+                    yieldAll(generateCombinations(i + 1, current + items[i]))
+                }
+            }
+        }
+
+        return LazySequenceValue.fromSequence(generateCombinations(0, emptyList()))
+    }
+
+    /**
+     * range(from, to, step) - Generate range with custom step.
+     */
+    @JvmStatic
+    fun range(from: Value, to: Value, step: Value): Value {
+        if (from !is IntValue) throw SantaRuntimeException("range: from must be Integer")
+        if (to !is IntValue) throw SantaRuntimeException("range: to must be Integer")
+        if (step !is IntValue) throw SantaRuntimeException("range: step must be Integer")
+
+        val start = from.value
+        val end = to.value
+        val s = step.value
+
+        if (s == 0L) throw SantaRuntimeException("range: step cannot be zero")
+        if (s > 0 && start > end) throw SantaRuntimeException("range: step direction mismatch (positive step with start > end)")
+        if (s < 0 && start < end) throw SantaRuntimeException("range: step direction mismatch (negative step with start < end)")
+
+        val seq = generateSequence(start) { prev ->
+            val next = prev + s
+            if (s > 0 && next < end) next
+            else if (s < 0 && next > end) next
+            else null
+        }.map { IntValue(it) as Value }
+
+        return LazySequenceValue.fromSequence(seq)
+    }
+
+    // =========================================================================
+    // Utility Functions (LANG.txt §11.16)
+    // =========================================================================
+
+    /**
+     * id(value) - Identity function: returns input unchanged.
+     */
+    @JvmStatic
+    fun id(value: Value): Value = value
+
+    // =========================================================================
+    // Helper functions
+    // =========================================================================
+
+    private fun toGraphemeList(s: String): List<String> {
+        if (s.isEmpty()) return emptyList()
+        val iter = com.ibm.icu.text.BreakIterator.getCharacterInstance()
+        iter.setText(s)
+        val graphemes = mutableListOf<String>()
+        var start = 0
+        var end = iter.next()
+        while (end != com.ibm.icu.text.BreakIterator.DONE) {
+            graphemes.add(s.substring(start, end))
+            start = end
+            end = iter.next()
+        }
+        return graphemes
+    }
+
+    private fun toSequence(collection: Value): Sequence<Value> = when (collection) {
+        is ListValue -> collection.elements.asSequence()
+        is SetValue -> collection.elements.asSequence()
+        is RangeValue -> collection.asSequence()
+        is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
+        is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
+        else -> emptySequence()
+    }
+
+    private fun toList(collection: Value): List<Value> = when (collection) {
+        is ListValue -> collection.elements.toList()
+        is SetValue -> collection.elements.toList()
+        is DictValue -> collection.entries.values.toList()
+        is StringValue -> toGraphemeList(collection.value).map { StringValue(it) }
+        is RangeValue -> collection.asSequence().toList()
+        is LazySequenceValue -> collection.take(Int.MAX_VALUE)
+        else -> emptyList()
+    }
+
     /**
      * Lookup table for built-in functions by name.
      * Maps name -> (arity, function reference)
      */
     val registry: Map<String, BuiltinInfo> = mapOf(
+        // Existing
         "size" to BuiltinInfo(1, Builtins::size),
         "first" to BuiltinInfo(1, Builtins::first),
         "rest" to BuiltinInfo(1, Builtins::rest),
@@ -122,6 +1447,71 @@ object Builtins {
         "keys" to BuiltinInfo(1, Builtins::keys),
         "values" to BuiltinInfo(1, Builtins::values),
         "abs" to BuiltinInfo(1, Builtins::abs),
+        // Type conversion
+        "ints" to BuiltinInfo(1, Builtins::ints),
+        "list" to BuiltinInfo(1, Builtins::list),
+        "set" to BuiltinInfo(1, Builtins::set),
+        "dict" to BuiltinInfo(1, Builtins::dict),
+        // Collection access
+        "get" to BuiltinInfo(2, Builtins::get),
+        "second" to BuiltinInfo(1, Builtins::second),
+        "last" to BuiltinInfo(1, Builtins::last),
+        // Collection modification
+        "assoc" to BuiltinInfo(3, Builtins::assoc),
+        "update" to BuiltinInfo(3, Builtins::update),
+        "update_d" to BuiltinInfo(4, Builtins::update_d),
+        // Transformation
+        "map" to BuiltinInfo(2, Builtins::map),
+        "filter" to BuiltinInfo(2, Builtins::filter),
+        "flat_map" to BuiltinInfo(2, Builtins::flat_map),
+        "filter_map" to BuiltinInfo(2, Builtins::filter_map),
+        "find_map" to BuiltinInfo(2, Builtins::find_map),
+        // Reduction
+        "reduce" to BuiltinInfo(2, Builtins::reduce),
+        "fold" to BuiltinInfo(3, Builtins::fold),
+        "scan" to BuiltinInfo(3, Builtins::scan),
+        "each" to BuiltinInfo(2, Builtins::each),
+        // Search
+        "find" to BuiltinInfo(2, Builtins::find),
+        "count" to BuiltinInfo(2, Builtins::count),
+        // Aggregation
+        "sum" to BuiltinInfo(1, Builtins::sum),
+        "max" to BuiltinInfo(1, Builtins::max),
+        "min" to BuiltinInfo(1, Builtins::min),
+        // Sequence manipulation
+        "skip" to BuiltinInfo(2, Builtins::skip),
+        "take" to BuiltinInfo(2, Builtins::take),
+        "sort" to BuiltinInfo(2, Builtins::sort),
+        "reverse" to BuiltinInfo(1, Builtins::reverse),
+        "rotate" to BuiltinInfo(2, Builtins::rotate),
+        "chunk" to BuiltinInfo(2, Builtins::chunk),
+        // Set operations
+        "union" to BuiltinInfo(1, Builtins::union),
+        "intersection" to BuiltinInfo(1, Builtins::intersection),
+        // Predicates
+        "includes?" to BuiltinInfo(2, Builtins::`includes?`),
+        "excludes?" to BuiltinInfo(2, Builtins::`excludes?`),
+        "any?" to BuiltinInfo(2, Builtins::`any?`),
+        "all?" to BuiltinInfo(2, Builtins::`all?`),
+        // Lazy sequences
+        "repeat" to BuiltinInfo(1, Builtins::repeat),
+        "cycle" to BuiltinInfo(1, Builtins::cycle),
+        "iterate" to BuiltinInfo(2, Builtins::iterate),
+        "zip" to BuiltinInfo(1, Builtins::zip),
+        "combinations" to BuiltinInfo(2, Builtins::combinations),
+        "range" to BuiltinInfo(3, Builtins::range),
+        // String functions
+        "lines" to BuiltinInfo(1, Builtins::lines),
+        "split" to BuiltinInfo(2, Builtins::split),
+        "upper" to BuiltinInfo(1, Builtins::upper),
+        "lower" to BuiltinInfo(1, Builtins::lower),
+        "replace" to BuiltinInfo(3, Builtins::replace),
+        "join" to BuiltinInfo(2, Builtins::join),
+        // Math
+        "signum" to BuiltinInfo(1, Builtins::signum),
+        "vec_add" to BuiltinInfo(2, Builtins::vec_add),
+        // Utility
+        "id" to BuiltinInfo(1, Builtins::id),
     )
 }
 

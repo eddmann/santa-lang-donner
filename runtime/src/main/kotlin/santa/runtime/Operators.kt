@@ -228,8 +228,9 @@ object Operators {
         else -> throw SantaRuntimeException("Cannot index ${target.typeName()}")
     }
 
-    // Helper: Compare two values
-    private fun compare(left: Value, right: Value): Int = when (left) {
+    /** Compare two values. Returns negative if left < right, 0 if equal, positive if left > right. */
+    @JvmStatic
+    fun compare(left: Value, right: Value): Int = when (left) {
         is IntValue -> when (right) {
             is IntValue -> left.value.compareTo(right.value)
             is DecimalValue -> left.value.toDouble().compareTo(right.value)
