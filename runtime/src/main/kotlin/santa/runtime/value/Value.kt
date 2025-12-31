@@ -4,6 +4,8 @@ import com.ibm.icu.text.BreakIterator
 import kotlinx.collections.immutable.PersistentList
 import kotlinx.collections.immutable.PersistentMap
 import kotlinx.collections.immutable.PersistentSet
+import kotlinx.collections.immutable.persistentListOf
+import kotlinx.collections.immutable.toPersistentList
 
 /**
  * Sealed interface representing all runtime values in santa-lang.
@@ -132,6 +134,31 @@ data class ListValue(val elements: PersistentList<Value>) : Value {
             NilValue
         }
     }
+
+    /** Concatenate two lists: [1, 2] + [3, 4] -> [1, 2, 3, 4] */
+    fun concat(other: ListValue): ListValue =
+        ListValue(elements.addAll(other.elements))
+
+    /** Repeat list n times: [1, 2] * 3 -> [1, 2, 1, 2, 1, 2] */
+    fun repeat(n: Int): ListValue {
+        if (n <= 0) return ListValue(persistentListOf())
+        var result = elements
+        repeat(n - 1) { result = result.addAll(elements) }
+        return ListValue(result)
+    }
+
+    /** Slice from startIndex (inclusive) to endIndex (exclusive). Negative indices count from end. */
+    fun slice(startIndex: Int, endIndex: Int): ListValue {
+        val normalizedStart = if (startIndex < 0) elements.size + startIndex else startIndex
+        val normalizedEnd = if (endIndex < 0) elements.size + endIndex else endIndex
+        val clampedStart = normalizedStart.coerceIn(0, elements.size)
+        val clampedEnd = normalizedEnd.coerceIn(0, elements.size)
+        return if (clampedStart >= clampedEnd) {
+            ListValue(persistentListOf())
+        } else {
+            ListValue(elements.subList(clampedStart, clampedEnd).toPersistentList())
+        }
+    }
 }
 
 /** Unordered collection of unique elements (LANG.txt §3.6) */
@@ -142,6 +169,22 @@ data class SetValue(val elements: PersistentSet<Value>) : Value {
 
     fun size(): Int = elements.size
     fun contains(value: Value): Boolean = elements.contains(value)
+
+    /** Add an element to the set (LANG.txt §3.11 - enforces hashability) */
+    fun add(value: Value): SetValue {
+        require(value.isHashable()) {
+            "Cannot add ${value.typeName()} to Set: value is not hashable"
+        }
+        return SetValue(elements.add(value))
+    }
+
+    /** Union of two sets: {1, 2} + {2, 3} -> {1, 2, 3} */
+    fun union(other: SetValue): SetValue =
+        SetValue(elements.addAll(other.elements))
+
+    /** Difference of two sets: {1, 2, 3} - {2} -> {1, 3} */
+    fun difference(other: SetValue): SetValue =
+        SetValue(elements.removeAll(other.elements))
 }
 
 /** Unordered key-value mapping (LANG.txt §3.7) */
@@ -154,6 +197,26 @@ data class DictValue(val entries: PersistentMap<Value, Value>) : Value {
 
     /** Get value for key, or NilValue if not found (LANG.txt §3.7) */
     fun get(key: Value): Value = entries[key] ?: NilValue
+
+    /** Put a key-value pair (LANG.txt §3.11 - enforces key hashability) */
+    fun put(key: Value, value: Value): DictValue {
+        require(key.isHashable()) {
+            "Cannot use ${key.typeName()} as Dictionary key: value is not hashable"
+        }
+        return DictValue(entries.put(key, value))
+    }
+
+    /** Merge two dictionaries (right takes precedence): #{a: 1} + #{b: 2} -> #{a: 1, b: 2} */
+    fun merge(other: DictValue): DictValue =
+        DictValue(entries.putAll(other.entries))
+
+    /** Get all keys as a list (order not specified) */
+    fun keys(): ListValue =
+        ListValue(entries.keys.toPersistentList())
+
+    /** Get all values as a list (order not specified) */
+    fun values(): ListValue =
+        ListValue(entries.values.toPersistentList())
 }
 
 /**
@@ -189,6 +252,17 @@ class RangeValue private constructor(
         return generateSequence(start) { it + step }
             .take(n)
             .toList()
+    }
+
+    /** Get a sequence of IntValue elements for zip/iteration. */
+    fun asSequence(): Sequence<Value> {
+        val baseSeq = generateSequence(start) { it + step }
+        val boundedSeq = if (endExclusive != null) {
+            baseSeq.takeWhile { if (step > 0) it < endExclusive else it > endExclusive }
+        } else {
+            baseSeq
+        }
+        return boundedSeq.map { IntValue(it) }
     }
 
     companion object {
@@ -254,7 +328,73 @@ class LazySequenceValue private constructor(
                 }
             }
         }
+
+        /**
+         * Zip multiple collections into tuples (LANG.txt §11.12).
+         *
+         * Stops at shortest collection.
+         * Returns List if ANY collection is finite, LazySequence if ALL are infinite.
+         */
+        fun zip(collections: List<Value>): Value {
+            if (collections.isEmpty()) return ListValue(persistentListOf())
+
+            // Check if all collections are infinite (unbounded ranges or lazy sequences)
+            val allInfinite = collections.all { isInfinite(it) }
+
+            // Convert each collection to a sequence
+            val sequences = collections.map { toSequence(it) }
+
+            // Zip the sequences together
+            val zippedSequence = zipSequences(sequences)
+
+            return if (allInfinite) {
+                // All infinite -> return LazySequence
+                LazySequenceValue { zippedSequence }
+            } else {
+                // At least one finite -> materialize to List
+                ListValue(zippedSequence.toList().toPersistentList())
+            }
+        }
+
+        private fun isInfinite(value: Value): Boolean = when (value) {
+            is RangeValue -> value.isUnbounded()
+            is LazySequenceValue -> true  // Lazy sequences are conceptually infinite
+            else -> false
+        }
+
+        private fun toSequence(value: Value): Sequence<Value> = when (value) {
+            is ListValue -> value.elements.asSequence()
+            is SetValue -> value.elements.asSequence()
+            is RangeValue -> value.asSequence()
+            is LazySequenceValue -> value.generator()
+            is StringValue -> {
+                // Convert string to sequence of single-character strings (grapheme clusters)
+                val graphemes = mutableListOf<Value>()
+                val iter = com.ibm.icu.text.BreakIterator.getCharacterInstance()
+                iter.setText(value.value)
+                var start = 0
+                var end = iter.next()
+                while (end != com.ibm.icu.text.BreakIterator.DONE) {
+                    graphemes.add(StringValue(value.value.substring(start, end)))
+                    start = end
+                    end = iter.next()
+                }
+                graphemes.asSequence()
+            }
+            else -> emptySequence()
+        }
+
+        private fun zipSequences(sequences: List<Sequence<Value>>): Sequence<Value> = sequence {
+            val iterators = sequences.map { it.iterator() }
+            while (iterators.all { it.hasNext() }) {
+                val tuple = iterators.map { it.next() }
+                yield(ListValue(tuple.toPersistentList()))
+            }
+        }
     }
+
+    // Expose generator for zip to use
+    internal fun generator(): Sequence<Value> = generator.invoke()
 }
 
 /**

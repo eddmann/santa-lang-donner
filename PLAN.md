@@ -176,10 +176,10 @@ Release Gate 5
 LANG.txt: Sections 3.4-3.9, 10
 
 Release Gate 6
-- [ ] Persistent List/Set/Dict support
-- [ ] Range behavior (inclusive, exclusive, unbounded)
-- [ ] Lazy sequence operations (iterate, repeat, cycle, zip)
-- [ ] Hashability rules enforced
+- [x] Persistent List/Set/Dict support
+- [x] Range behavior (inclusive, exclusive, unbounded)
+- [x] Lazy sequence operations (iterate, repeat, cycle, zip)
+- [x] Hashability rules enforced
 
 ---
 
