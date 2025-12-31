@@ -201,11 +201,11 @@ Release Gate 7
 LANG.txt: Sections 7, 8, 9
 
 Release Gate 8
-- [ ] if / if-let / match execution
-- [ ] Lambdas and closures with captured variables
-- [ ] Rest parameters and spread
-- [ ] Pipeline and composition behavior
-- [ ] Tail-call optimization strategy defined and tested
+- [x] if / if-let / match execution
+- [x] Lambdas and closures with captured variables
+- [ ] Rest parameters and spread (deferred)
+- [ ] Pipeline and composition behavior (deferred)
+- [ ] Tail-call optimization strategy defined and tested (deferred)
 
 ---
 

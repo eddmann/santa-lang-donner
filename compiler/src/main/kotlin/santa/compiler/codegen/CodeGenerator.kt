@@ -11,7 +11,7 @@ import java.util.concurrent.atomic.AtomicLong
  * Generates JVM bytecode from a santa-lang AST.
  *
  * Each program is compiled to a synthetic class with a static execute() method
- * that returns a Value.
+ * that returns a Value. Lambda functions compile to inner classes extending FunctionValue.
  */
 object CodeGenerator {
     private val classCounter = AtomicLong(0)
@@ -23,8 +23,18 @@ object CodeGenerator {
     }
 }
 
+/**
+ * Information about a captured variable.
+ */
+private data class CaptureInfo(
+    val name: String,
+    val slot: Int,  // Slot in the enclosing scope
+)
+
 private class ClassGenerator(private val className: String) {
     private val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES or ClassWriter.COMPUTE_MAXS)
+    private val lambdaClasses = mutableMapOf<String, ByteArray>()
+    private var lambdaCounter = 0
 
     fun generate(program: Program): CompiledScript {
         cw.visit(V21, ACC_PUBLIC or ACC_FINAL, className, null, "java/lang/Object", null)
@@ -32,7 +42,11 @@ private class ClassGenerator(private val className: String) {
         generateExecuteMethod(program)
 
         cw.visitEnd()
-        return CompiledScript(className.replace('/', '.'), cw.toByteArray())
+        return CompiledScript(
+            className.replace('/', '.'),
+            cw.toByteArray(),
+            lambdaClasses.mapKeys { it.key.replace('/', '.') }
+        )
     }
 
     private fun generateExecuteMethod(program: Program) {
@@ -45,7 +59,7 @@ private class ClassGenerator(private val className: String) {
         )
         mv.visitCode()
 
-        val exprGen = ExpressionGenerator(mv)
+        val exprGen = ExpressionGenerator(mv, this::generateLambdaClass)
 
         if (program.items.isEmpty()) {
             exprGen.pushNil()
@@ -67,8 +81,115 @@ private class ClassGenerator(private val className: String) {
         mv.visitEnd()
     }
 
+    /**
+     * Generate a lambda class and return its name.
+     */
+    fun generateLambdaClass(
+        params: List<Param>,
+        body: Expr,
+        captures: List<CaptureInfo>,
+    ): String {
+        val lambdaClassName = "${className}\$Lambda${++lambdaCounter}"
+        val lcw = ClassWriter(ClassWriter.COMPUTE_FRAMES or ClassWriter.COMPUTE_MAXS)
+
+        lcw.visit(
+            V21,
+            ACC_PUBLIC or ACC_FINAL,
+            lambdaClassName,
+            null,
+            FUNCTION_VALUE_TYPE,
+            null
+        )
+
+        // Generate fields for captured variables
+        for (capture in captures) {
+            lcw.visitField(
+                ACC_PRIVATE or ACC_FINAL,
+                capture.name,
+                "L${VALUE_TYPE};",
+                null,
+                null
+            ).visitEnd()
+        }
+
+        // Generate constructor
+        generateLambdaConstructor(lcw, lambdaClassName, params, captures)
+
+        // Generate invoke method
+        generateLambdaInvoke(lcw, lambdaClassName, params, body, captures)
+
+        lcw.visitEnd()
+        lambdaClasses[lambdaClassName] = lcw.toByteArray()
+        return lambdaClassName
+    }
+
+    private fun generateLambdaConstructor(
+        lcw: ClassWriter,
+        lambdaClassName: String,
+        params: List<Param>,
+        captures: List<CaptureInfo>,
+    ) {
+        // Constructor signature: (capture1, capture2, ...) -> void
+        val desc = buildString {
+            append('(')
+            repeat(captures.size) { append("L${VALUE_TYPE};") }
+            append(")V")
+        }
+
+        val mv = lcw.visitMethod(ACC_PUBLIC, "<init>", desc, null, null)
+        mv.visitCode()
+
+        // Call super(arity)
+        mv.visitVarInsn(ALOAD, 0)
+        val arity = params.count { it is NamedParam }
+        pushInt(mv, arity)
+        mv.visitMethodInsn(INVOKESPECIAL, FUNCTION_VALUE_TYPE, "<init>", "(I)V", false)
+
+        // Store captured values in fields
+        for ((index, capture) in captures.withIndex()) {
+            mv.visitVarInsn(ALOAD, 0)  // this
+            mv.visitVarInsn(ALOAD, index + 1)  // captured value
+            mv.visitFieldInsn(PUTFIELD, lambdaClassName, capture.name, "L${VALUE_TYPE};")
+        }
+
+        mv.visitInsn(RETURN)
+        mv.visitMaxs(-1, -1)
+        mv.visitEnd()
+    }
+
+    private fun generateLambdaInvoke(
+        lcw: ClassWriter,
+        lambdaClassName: String,
+        params: List<Param>,
+        body: Expr,
+        captures: List<CaptureInfo>,
+    ) {
+        val mv = lcw.visitMethod(
+            ACC_PUBLIC,
+            "invoke",
+            "(Ljava/util/List;)L${VALUE_TYPE};",
+            null,
+            null
+        )
+        mv.visitCode()
+
+        // Create expression generator for lambda body
+        // We need a special generator that knows about:
+        // 1. Captured variables (accessed via this.field)
+        // 2. Parameters (extracted from args list)
+        val exprGen = LambdaExpressionGenerator(mv, lambdaClassName, params, captures, this::generateLambdaClass)
+
+        // Compile the body
+        exprGen.compileExpr(body)
+
+        mv.visitInsn(ARETURN)
+        mv.visitMaxs(-1, -1)
+        mv.visitEnd()
+    }
+
     companion object {
         const val VALUE_TYPE = "santa/runtime/value/Value"
+        const val FUNCTION_VALUE_TYPE = "santa/runtime/value/FunctionValue"
     }
 }
 
@@ -82,14 +203,40 @@ private data class LocalBinding(
 )
 
 /**
+ * Type alias for lambda class generator function.
+ */
+private typealias LambdaGenerator = (params: List<Param>, body: Expr, captures: List<CaptureInfo>) -> String
+
+/**
+ * Helper to push int constant onto stack.
+ */
+private fun pushInt(mv: MethodVisitor, value: Int) {
+    when (value) {
+        -1 -> mv.visitInsn(ICONST_M1)
+        0 -> mv.visitInsn(ICONST_0)
+        1 -> mv.visitInsn(ICONST_1)
+        2 -> mv.visitInsn(ICONST_2)
+        3 -> mv.visitInsn(ICONST_3)
+        4 -> mv.visitInsn(ICONST_4)
+        5 -> mv.visitInsn(ICONST_5)
+        in Byte.MIN_VALUE..Byte.MAX_VALUE -> mv.visitIntInsn(BIPUSH, value)
+        in Short.MIN_VALUE..Short.MAX_VALUE -> mv.visitIntInsn(SIPUSH, value)
+        else -> mv.visitLdcInsn(value)
+    }
+}
+
+/**
  * Generates bytecode for expressions.
  *
  * Each expression leaves exactly one Value on the operand stack.
  */
-private class ExpressionGenerator(private val mv: MethodVisitor) {
+private open class ExpressionGenerator(
+    protected val mv: MethodVisitor,
+    private val lambdaGenerator: LambdaGenerator,
+) {
     // Scope stack: each scope is a map of name -> LocalBinding
-    private val scopes = ArrayDeque<MutableMap<String, LocalBinding>>()
-    private var nextSlot = 0
+    protected val scopes = ArrayDeque<MutableMap<String, LocalBinding>>()
+    protected var nextSlot = 0
 
     init {
         pushScope()
@@ -104,7 +251,7 @@ private class ExpressionGenerator(private val mv: MethodVisitor) {
         }
     }
 
-    fun compileExpr(expr: Expr) {
+    open fun compileExpr(expr: Expr) {
         when (expr) {
             is IntLiteralExpr -> compileIntLiteral(expr)
             is DecimalLiteralExpr -> compileDecimalLiteral(expr)
@@ -126,10 +273,10 @@ private class ExpressionGenerator(private val mv: MethodVisitor) {
             is InfixCallExpr -> TODO("Infix calls not yet implemented")
             is CallExpr -> compileCall(expr)
             is IndexExpr -> compileIndex(expr)
-            is FunctionExpr -> TODO("Function expressions not yet implemented")
+            is FunctionExpr -> compileFunctionExpr(expr)
             is BlockExpr -> compileBlock(expr)
-            is IfExpr -> TODO("If expressions not yet implemented")
-            is MatchExpr -> TODO("Match expressions not yet implemented")
+            is IfExpr -> compileIfExpr(expr)
+            is MatchExpr -> compileMatchExpr(expr)
         }
     }
 
@@ -432,6 +579,322 @@ private class ExpressionGenerator(private val mv: MethodVisitor) {
         popScope()
     }
 
+    private fun compileIfExpr(expr: IfExpr) {
+        val elseLabel = Label()
+        val endLabel = Label()
+
+        // Evaluate condition based on type
+        when (val condition = expr.condition) {
+            is ExprCondition -> {
+                compileExpr(condition.expr)
+                mv.visitMethodInsn(
+                    INVOKESTATIC,
+                    OPERATORS_TYPE,
+                    "isTruthy",
+                    "(L${VALUE_TYPE};)Z",
+                    false
+                )
+                mv.visitJumpInsn(IFEQ, elseLabel) // Jump to else if falsy
+
+                // Then branch
+                compileExpr(expr.thenBranch)
+                mv.visitJumpInsn(GOTO, endLabel)
+
+                // Else branch (or nil if no else)
+                mv.visitLabel(elseLabel)
+                if (expr.elseBranch != null) {
+                    compileExpr(expr.elseBranch)
+                } else {
+                    pushNil()
+                }
+
+                mv.visitLabel(endLabel)
+            }
+            is LetCondition -> {
+                // Evaluate value and check truthiness
+                compileExpr(condition.value)
+                mv.visitInsn(DUP) // Keep value for later binding
+
+                mv.visitMethodInsn(
+                    INVOKESTATIC,
+                    OPERATORS_TYPE,
+                    "isTruthy",
+                    "(L${VALUE_TYPE};)Z",
+                    false
+                )
+                mv.visitJumpInsn(IFEQ, elseLabel) // Jump to else if falsy
+
+                // Value was truthy - bind it in then branch scope
+                pushScope()
+                when (val pattern = condition.pattern) {
+                    is BindingPattern -> {
+                        val slot = allocateSlot()
+                        declareBinding(pattern.name, slot, isMutable = false)
+                        mv.visitVarInsn(ASTORE, slot)
+                    }
+                    else -> TODO("Pattern ${pattern::class.simpleName} not yet implemented in if-let")
+                }
+
+                // Then branch
+                compileExpr(expr.thenBranch)
+                popScope()
+                mv.visitJumpInsn(GOTO, endLabel)
+
+                // Else branch (or nil if no else) - pop the unused value first
+                mv.visitLabel(elseLabel)
+                mv.visitInsn(POP) // Pop the duplicated value that wasn't bound
+                if (expr.elseBranch != null) {
+                    compileExpr(expr.elseBranch)
+                } else {
+                    pushNil()
+                }
+
+                mv.visitLabel(endLabel)
+            }
+        }
+    }
+
+    private fun compileMatchExpr(expr: MatchExpr) {
+        val endLabel = Label()
+
+        // Compile subject once and store in a local
+        compileExpr(expr.subject)
+        val subjectSlot = allocateSlot()
+        mv.visitVarInsn(ASTORE, subjectSlot)
+
+        for (arm in expr.arms) {
+            val nextArmLabel = Label()
+
+            // Each arm gets its own scope for pattern bindings
+            pushScope()
+
+            // Compile pattern matching - uses subject from local slot
+            compilePatternMatch(arm.pattern, subjectSlot, nextArmLabel)
+
+            // If there's a guard, evaluate it
+            if (arm.guard != null) {
+                compileExpr(arm.guard)
+                mv.visitMethodInsn(
+                    INVOKESTATIC,
+                    OPERATORS_TYPE,
+                    "isTruthy",
+                    "(L${VALUE_TYPE};)Z",
+                    false
+                )
+                mv.visitJumpInsn(IFEQ, nextArmLabel) // Jump if guard is false
+            }
+
+            // Pattern matched (and guard passed if present) - compile body
+            compileExpr(arm.body)
+
+            // Pop scope BEFORE generating GOTO - we're done with this arm's bindings
+            popScope()
+
+            mv.visitJumpInsn(GOTO, endLabel)
+
+            // Label for next arm (or no-match case)
+            mv.visitLabel(nextArmLabel)
+        }
+
+        // No pattern matched - return nil
+        pushNil()
+
+        mv.visitLabel(endLabel)
+    }
+
+    /**
+     * Compiles pattern matching code.
+     * Subject is in the local slot, not on stack.
+     * Jumps to failLabel if pattern doesn't match.
+     * Binds pattern variables in the current scope.
+     */
+    private fun compilePatternMatch(pattern: Pattern, subjectSlot: Int, failLabel: Label) {
+        when (pattern) {
+            is WildcardPattern -> {
+                // Wildcard always matches, nothing to do
+            }
+            is BindingPattern -> {
+                // Binding always matches and captures the value
+                mv.visitVarInsn(ALOAD, subjectSlot)
+                val slot = allocateSlot()
+                declareBinding(pattern.name, slot, isMutable = false)
+                mv.visitVarInsn(ASTORE, slot)
+            }
+            is LiteralPattern -> {
+                // Compare subject with literal
+                mv.visitVarInsn(ALOAD, subjectSlot)
+                compileExpr(pattern.literal)
+                mv.visitMethodInsn(
+                    INVOKESTATIC,
+                    OPERATORS_TYPE,
+                    "equal",
+                    "(L${VALUE_TYPE};L${VALUE_TYPE};)L${VALUE_TYPE};",
+                    false
+                )
+                mv.visitMethodInsn(
+                    INVOKESTATIC,
+                    OPERATORS_TYPE,
+                    "isTruthy",
+                    "(L${VALUE_TYPE};)Z",
+                    false
+                )
+                mv.visitJumpInsn(IFEQ, failLabel) // Jump to next arm if not equal
+            }
+            is ListPattern -> {
+                compileListPatternMatch(pattern, subjectSlot, failLabel)
+            }
+            is RestPattern -> {
+                // Rest pattern at top level just binds remaining (whole subject)
+                if (pattern.name != null) {
+                    mv.visitVarInsn(ALOAD, subjectSlot)
+                    val slot = allocateSlot()
+                    declareBinding(pattern.name, slot, isMutable = false)
+                    mv.visitVarInsn(ASTORE, slot)
+                }
+            }
+            is RangePattern -> {
+                TODO("Range patterns not yet implemented")
+            }
+        }
+    }
+
+    private fun compileListPatternMatch(pattern: ListPattern, subjectSlot: Int, failLabel: Label) {
+        // Check if subject is a list
+        mv.visitVarInsn(ALOAD, subjectSlot)
+        mv.visitTypeInsn(INSTANCEOF, LIST_VALUE_TYPE)
+        mv.visitJumpInsn(IFEQ, failLabel) // Not a list, fail
+
+        // Load and cast to ListValue, store in a new slot for element access
+        mv.visitVarInsn(ALOAD, subjectSlot)
+        mv.visitTypeInsn(CHECKCAST, LIST_VALUE_TYPE)
+        val listSlot = allocateSlot()
+        mv.visitVarInsn(ASTORE, listSlot)
+
+        // Check for rest pattern
+        val hasRest = pattern.elements.any { it is RestPattern }
+        val nonRestCount = pattern.elements.count { it !is RestPattern }
+
+        // Get size once and store it
+        mv.visitVarInsn(ALOAD, listSlot)
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL,
+            LIST_VALUE_TYPE,
+            "size",
+            "()I",
+            false
+        )
+        val sizeSlot = allocateSlot()
+        mv.visitVarInsn(ISTORE, sizeSlot)
+
+        if (hasRest) {
+            // With rest: need at least (nonRestCount) elements
+            mv.visitVarInsn(ILOAD, sizeSlot)
+            pushIntValue(nonRestCount)
+            mv.visitJumpInsn(IF_ICMPLT, failLabel) // Fail if size < nonRestCount
+        } else {
+            // Without rest: need exactly pattern.elements.size elements
+            mv.visitVarInsn(ILOAD, sizeSlot)
+            pushIntValue(pattern.elements.size)
+            mv.visitJumpInsn(IF_ICMPNE, failLabel) // Fail if size != pattern size
+        }
+
+        // Match each element
+        var elementIndex = 0
+        for (element in pattern.elements) {
+            when (element) {
+                is RestPattern -> {
+                    // Capture remaining elements as a list using slice(startIndex, size)
+                    if (element.name != null) {
+                        mv.visitVarInsn(ALOAD, listSlot)
+                        pushIntValue(elementIndex)
+                        mv.visitVarInsn(ILOAD, sizeSlot)
+                        mv.visitMethodInsn(
+                            INVOKEVIRTUAL,
+                            LIST_VALUE_TYPE,
+                            "slice",
+                            "(II)L${LIST_VALUE_TYPE};",
+                            false
+                        )
+                        val slot = allocateSlot()
+                        declareBinding(element.name, slot, isMutable = false)
+                        mv.visitVarInsn(ASTORE, slot)
+                    }
+                    // Rest consumes all remaining elements, stop here
+                    break
+                }
+                is BindingPattern -> {
+                    // Get element at index and bind
+                    mv.visitVarInsn(ALOAD, listSlot)
+                    pushIntValue(elementIndex)
+                    mv.visitMethodInsn(
+                        INVOKEVIRTUAL,
+                        LIST_VALUE_TYPE,
+                        "get",
+                        "(I)L${VALUE_TYPE};",
+                        false
+                    )
+                    val slot = allocateSlot()
+                    declareBinding(element.name, slot, isMutable = false)
+                    mv.visitVarInsn(ASTORE, slot)
+                    elementIndex++
+                }
+                is WildcardPattern -> {
+                    // Skip this element
+                    elementIndex++
+                }
+                is LiteralPattern -> {
+                    // Get element and compare with literal
+                    mv.visitVarInsn(ALOAD, listSlot)
+                    pushIntValue(elementIndex)
+                    mv.visitMethodInsn(
+                        INVOKEVIRTUAL,
+                        LIST_VALUE_TYPE,
+                        "get",
+                        "(I)L${VALUE_TYPE};",
+                        false
+                    )
+                    compileExpr(element.literal)
+                    mv.visitMethodInsn(
+                        INVOKESTATIC,
+                        OPERATORS_TYPE,
+                        "equal",
+                        "(L${VALUE_TYPE};L${VALUE_TYPE};)L${VALUE_TYPE};",
+                        false
+                    )
+                    mv.visitMethodInsn(
+                        INVOKESTATIC,
+                        OPERATORS_TYPE,
+                        "isTruthy",
+                        "(L${VALUE_TYPE};)Z",
+                        false
+                    )
+                    mv.visitJumpInsn(IFEQ, failLabel)
+                    elementIndex++
+                }
+                is ListPattern -> {
+                    // Nested list pattern - get element and recursively match
+                    mv.visitVarInsn(ALOAD, listSlot)
+                    pushIntValue(elementIndex)
+                    mv.visitMethodInsn(
+                        INVOKEVIRTUAL,
+                        LIST_VALUE_TYPE,
+                        "get",
+                        "(I)L${VALUE_TYPE};",
+                        false
+                    )
+                    // Store nested element in a temp slot
+                    val nestedSlot = allocateSlot()
+                    mv.visitVarInsn(ASTORE, nestedSlot)
+                    compileListPatternMatch(element, nestedSlot, failLabel)
+                    elementIndex++
+                }
+                is RangePattern -> TODO("Range patterns in lists not yet implemented")
+            }
+        }
+    }
+
+    private fun pushIntValue(value: Int) = pushInt(mv, value)
+
     private fun compileListLiteral(expr: ListLiteralExpr) {
         // Create a new PersistentList builder
         mv.visitMethodInsn(
@@ -481,14 +944,177 @@ private class ExpressionGenerator(private val mv: MethodVisitor) {
         )
     }
 
+    private fun compileFunctionExpr(expr: FunctionExpr) {
+        // Find captured variables (free variables in body that are bound in enclosing scope)
+        val freeVars = findFreeVariables(expr.body, expr.params)
+        val captures = freeVars.mapNotNull { name ->
+            lookupBinding(name)?.let { binding ->
+                CaptureInfo(name, binding.slot)
+            }
+        }
+
+        // Generate lambda class
+        val lambdaClassName = lambdaGenerator(expr.params, expr.body, captures)
+
+        // Instantiate the lambda: new LambdaClass(capture1, capture2, ...)
+        mv.visitTypeInsn(NEW, lambdaClassName)
+        mv.visitInsn(DUP)
+
+        // Push captured values
+        for (capture in captures) {
+            mv.visitVarInsn(ALOAD, capture.slot)
+        }
+
+        // Constructor descriptor
+        val constructorDesc = buildString {
+            append('(')
+            repeat(captures.size) { append("L${VALUE_TYPE};") }
+            append(")V")
+        }
+
+        mv.visitMethodInsn(INVOKESPECIAL, lambdaClassName, "<init>", constructorDesc, false)
+    }
+
+    /**
+     * Find free variables in an expression that are not bound by the given parameters.
+     */
+    private fun findFreeVariables(expr: Expr, params: List<Param>): Set<String> {
+        val paramNames = params.filterIsInstance<NamedParam>().map { it.name }.toSet()
+        val freeVars = mutableSetOf<String>()
+
+        fun visit(e: Expr, bound: Set<String>) {
+            when (e) {
+                is IdentifierExpr -> {
+                    if (e.name !in bound && e.name !in BUILTIN_FUNCTIONS) {
+                        freeVars.add(e.name)
+                    }
+                }
+                is BinaryExpr -> { visit(e.left, bound); visit(e.right, bound) }
+                is UnaryExpr -> visit(e.expr, bound)
+                is LetExpr -> {
+                    visit(e.value, bound)
+                    val newBound = when (val p = e.pattern) {
+                        is BindingPattern -> bound + p.name
+                        else -> bound
+                    }
+                    // Let doesn't have a continuation expression in AST, handled by block
+                }
+                is BlockExpr -> {
+                    var currentBound = bound
+                    for (stmt in e.statements) {
+                        when (stmt) {
+                            is ExprStatement -> visit(stmt.expr, currentBound)
+                            is LetExpr -> {
+                                visit(stmt.value, currentBound)
+                                val p = stmt.pattern
+                                if (p is BindingPattern) {
+                                    currentBound = currentBound + p.name
+                                }
+                            }
+                            is ReturnExpr -> stmt.value?.let { visit(it, currentBound) }
+                            is BreakExpr -> stmt.value?.let { visit(it, currentBound) }
+                        }
+                    }
+                }
+                is CallExpr -> {
+                    visit(e.callee, bound)
+                    for (arg in e.arguments) {
+                        visit(arg.expr, bound)
+                    }
+                }
+                is IfExpr -> {
+                    when (val cond = e.condition) {
+                        is ExprCondition -> visit(cond.expr, bound)
+                        is LetCondition -> {
+                            visit(cond.value, bound)
+                            // Let binding in condition binds in then branch
+                        }
+                    }
+                    visit(e.thenBranch, bound)
+                    e.elseBranch?.let { visit(it, bound) }
+                }
+                is MatchExpr -> {
+                    visit(e.subject, bound)
+                    for (arm in e.arms) {
+                        val patternBound = collectPatternBindings(arm.pattern)
+                        arm.guard?.let { visit(it, bound + patternBound) }
+                        visit(arm.body, bound + patternBound)
+                    }
+                }
+                is FunctionExpr -> {
+                    val fnParams = e.params.filterIsInstance<NamedParam>().map { it.name }.toSet()
+                    visit(e.body, bound + fnParams)
+                }
+                is IndexExpr -> { visit(e.target, bound); visit(e.index, bound) }
+                is AssignmentExpr -> visit(e.value, bound)
+                is ListLiteralExpr -> e.elements.forEach { elem ->
+                    when (elem) {
+                        is ExprElement -> visit(elem.expr, bound)
+                        is SpreadElement -> visit(elem.expr, bound)
+                    }
+                }
+                // Terminals that don't contain expressions
+                is IntLiteralExpr, is DecimalLiteralExpr, is StringLiteralExpr,
+                is BoolLiteralExpr, is NilLiteralExpr, is PlaceholderExpr -> { }
+                is SetLiteralExpr, is DictLiteralExpr, is RangeExpr, is InfixCallExpr -> { }
+                is ReturnExpr -> e.value?.let { visit(it, bound) }
+                is BreakExpr -> e.value?.let { visit(it, bound) }
+            }
+        }
+
+        visit(expr, paramNames)
+        return freeVars
+    }
+
+    private fun collectPatternBindings(pattern: Pattern): Set<String> {
+        return when (pattern) {
+            is BindingPattern -> setOf(pattern.name)
+            is ListPattern -> pattern.elements.flatMap { collectPatternBindings(it) }.toSet()
+            is RestPattern -> if (pattern.name != null) setOf(pattern.name) else emptySet()
+            is WildcardPattern, is LiteralPattern, is RangePattern -> emptySet()
+        }
+    }
+
     private fun compileCall(expr: CallExpr) {
         // Check if it's a call to a built-in function
         val callee = expr.callee
         if (callee is IdentifierExpr && callee.name in BUILTIN_FUNCTIONS) {
             compileBuiltinCall(callee.name, expr.arguments)
         } else {
-            // General function call - need to evaluate callee and invoke
-            TODO("General function calls not yet implemented")
+            // General function call - evaluate callee (should be FunctionValue)
+            compileExpr(callee)
+
+            // Build argument list
+            val plainArgs = expr.arguments.filterIsInstance<ExprArgument>()
+
+            // Create List<Value> for arguments: Arrays.asList(arg1, arg2, ...)
+            pushIntValue(plainArgs.size)
+            mv.visitTypeInsn(ANEWARRAY, VALUE_TYPE)
+            for ((index, arg) in plainArgs.withIndex()) {
+                mv.visitInsn(DUP)
+                pushIntValue(index)
+                compileExpr(arg.expr)
+                mv.visitInsn(AASTORE)
+            }
+            mv.visitMethodInsn(
+                INVOKESTATIC,
+                "java/util/Arrays",
+                "asList",
+                "([Ljava/lang/Object;)Ljava/util/List;",
+                false
+            )
+
+            // Cast callee to FunctionValue and invoke
+            mv.visitInsn(SWAP) // Move args list below callee
+            mv.visitTypeInsn(CHECKCAST, FUNCTION_VALUE_TYPE)
+            mv.visitInsn(SWAP) // Move callee below args list again
+            mv.visitMethodInsn(
+                INVOKEVIRTUAL,
+                FUNCTION_VALUE_TYPE,
+                "invoke",
+                "(Ljava/util/List;)L${VALUE_TYPE};",
+                false
+            )
         }
     }
 
@@ -519,26 +1145,26 @@ private class ExpressionGenerator(private val mv: MethodVisitor) {
 
     // Scope management
 
-    private fun pushScope() {
+    protected fun pushScope() {
         scopes.addLast(mutableMapOf())
     }
 
-    private fun popScope() {
+    protected fun popScope() {
         scopes.removeLast()
     }
 
-    private fun declareBinding(name: String, slot: Int, isMutable: Boolean) {
+    protected fun declareBinding(name: String, slot: Int, isMutable: Boolean) {
         scopes.last()[name] = LocalBinding(name, slot, isMutable)
     }
 
-    private fun lookupBinding(name: String): LocalBinding? {
+    protected fun lookupBinding(name: String): LocalBinding? {
         for (scope in scopes.asReversed()) {
             scope[name]?.let { return it }
         }
         return null
     }
 
-    private fun allocateSlot(): Int = nextSlot++
+    protected fun allocateSlot(): Int = nextSlot++
 
     // Helpers
 
@@ -589,6 +1215,7 @@ private class ExpressionGenerator(private val mv: MethodVisitor) {
         const val BOOL_VALUE_TYPE = "santa/runtime/value/BoolValue"
         const val NIL_VALUE_TYPE = "santa/runtime/value/NilValue"
         const val LIST_VALUE_TYPE = "santa/runtime/value/ListValue"
+        const val FUNCTION_VALUE_TYPE = "santa/runtime/value/FunctionValue"
         const val OPERATORS_TYPE = "santa/runtime/Operators"
         const val BUILTINS_TYPE = "santa/runtime/Builtins"
 
@@ -596,6 +1223,70 @@ private class ExpressionGenerator(private val mv: MethodVisitor) {
             "size", "first", "rest", "push", "int", "type",
             "keys", "values", "abs",
         )
+    }
+}
+
+/**
+ * Generates bytecode for expressions inside lambda bodies.
+ * Handles parameter access and captured variable access.
+ */
+private class LambdaExpressionGenerator(
+    mv: MethodVisitor,
+    private val lambdaClassName: String,
+    private val params: List<Param>,
+    private val captures: List<CaptureInfo>,
+    lambdaGenerator: LambdaGenerator,
+) : ExpressionGenerator(mv, lambdaGenerator) {
+
+    init {
+        // Clear the default scope and set up lambda-specific bindings
+        scopes.clear()
+        pushScope()
+
+        // Slot 0 is 'this', slot 1 is 'args' list
+        nextSlot = 2
+
+        // Bind parameters: extract from args list
+        val namedParams = params.filterIsInstance<NamedParam>()
+        for ((index, param) in namedParams.withIndex()) {
+            // args.get(index) -> store in local slot
+            mv.visitVarInsn(ALOAD, 1) // args
+            pushInt(mv, index)
+            mv.visitMethodInsn(
+                INVOKEINTERFACE,
+                "java/util/List",
+                "get",
+                "(I)Ljava/lang/Object;",
+                true
+            )
+            mv.visitTypeInsn(CHECKCAST, VALUE_TYPE)
+            val slot = nextSlot++
+            mv.visitVarInsn(ASTORE, slot)
+            declareBinding(param.name, slot, isMutable = false)
+        }
+    }
+
+    override fun compileExpr(expr: Expr) {
+        when (expr) {
+            is IdentifierExpr -> {
+                // Check if it's a captured variable
+                val capture = captures.find { it.name == expr.name }
+                if (capture != null) {
+                    // Load from this.fieldName
+                    mv.visitVarInsn(ALOAD, 0) // this
+                    mv.visitFieldInsn(
+                        GETFIELD,
+                        lambdaClassName,
+                        capture.name,
+                        "L${VALUE_TYPE};"
+                    )
+                } else {
+                    // Fall back to local variable lookup
+                    super.compileExpr(expr)
+                }
+            }
+            else -> super.compileExpr(expr)
+        }
     }
 }
 

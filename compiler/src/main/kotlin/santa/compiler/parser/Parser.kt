@@ -148,6 +148,7 @@ class Parser(private val tokens: List<Token>) {
             TokenType.LBRACE -> parseBracedExpression(token)
             TokenType.DICT_START -> parseDictLiteral(token)
             TokenType.PIPE -> parseFunctionLiteral(token)
+            TokenType.PIPE_PIPE -> parseEmptyParamsFunctionLiteral(token)
             TokenType.LET -> parseLetBindingAfterLet(token)
             TokenType.RETURN -> parseReturnAfterToken(token)
             TokenType.BREAK -> parseBreakAfterToken(token)
@@ -223,6 +224,16 @@ class Parser(private val tokens: List<Token>) {
             parseExpression(0)
         }
         return FunctionExpr(params, body, spanFrom(startToken.span, body.span))
+    }
+
+    private fun parseEmptyParamsFunctionLiteral(startToken: Token): Expr {
+        // || already consumed - empty params
+        val body = if (check(TokenType.LBRACE)) {
+            parseBlockExpression()
+        } else {
+            parseExpression(0)
+        }
+        return FunctionExpr(emptyList(), body, spanFrom(startToken.span, body.span))
     }
 
     private fun parseParams(): List<Param> {
