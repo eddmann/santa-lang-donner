@@ -1703,4 +1703,33 @@ class CodegenTest {
             eval("fold_s([0, 0], |[total, cnt], x| [total + x, cnt + 1], [1, 2, 3])") shouldBe IntValue(6)
         }
     }
+
+    @Nested
+    inner class DictShorthand {
+        @Test
+        fun `dict shorthand single variable`() {
+            val result = eval("let x = 1; #{x}") as DictValue
+            result.get(StringValue("x")) shouldBe IntValue(1)
+        }
+
+        @Test
+        fun `dict shorthand multiple variables`() {
+            val result = eval("let a = 1; let b = 2; #{a, b}") as DictValue
+            result.get(StringValue("a")) shouldBe IntValue(1)
+            result.get(StringValue("b")) shouldBe IntValue(2)
+        }
+
+        @Test
+        fun `dict shorthand mixed with regular entries`() {
+            val result = eval("let x = 10; #{x, \"y\": 20}") as DictValue
+            result.get(StringValue("x")) shouldBe IntValue(10)
+            result.get(StringValue("y")) shouldBe IntValue(20)
+        }
+
+        @Test
+        fun `dict shorthand with function value`() {
+            val result = eval("let f = |x| x + 1; #{f}") as DictValue
+            result.get(StringValue("f")).typeName() shouldBe "Function"
+        }
+    }
 }

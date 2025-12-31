@@ -1400,7 +1400,26 @@ private open class ExpressionGenerator(
                         true
                     )
                 }
-                is ShorthandEntry -> TODO("Shorthand entries in dict literals not yet implemented")
+                is ShorthandEntry -> {
+                    // Key is the name as a string literal
+                    mv.visitLdcInsn(entry.name)
+                    mv.visitMethodInsn(
+                        INVOKESTATIC,
+                        STRING_VALUE_TYPE,
+                        "box",
+                        "(Ljava/lang/String;)L${STRING_VALUE_TYPE};",
+                        false
+                    )
+                    // Value is the variable with that name
+                    compileExpr(IdentifierExpr(entry.name, expr.span))
+                    mv.visitMethodInsn(
+                        INVOKEINTERFACE,
+                        "kotlinx/collections/immutable/PersistentMap",
+                        "put",
+                        "(Ljava/lang/Object;Ljava/lang/Object;)Lkotlinx/collections/immutable/PersistentMap;",
+                        true
+                    )
+                }
             }
         }
 
