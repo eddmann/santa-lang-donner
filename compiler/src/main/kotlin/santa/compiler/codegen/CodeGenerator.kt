@@ -738,6 +738,21 @@ private open class ExpressionGenerator(
                     pushNil()
                 }
             }
+            is ListPattern -> {
+                // Compile the value
+                compileExpr(expr.value)
+
+                // Cast to ListValue and store in temp slot
+                mv.visitTypeInsn(CHECKCAST, LIST_VALUE_TYPE)
+                val listSlot = allocateSlot()
+                mv.visitVarInsn(ASTORE, listSlot)
+
+                // Bind each element of the list pattern
+                compileListPatternBindings(pattern, listSlot)
+
+                // Let statement returns nil
+                pushNil()
+            }
             else -> TODO("Pattern ${pattern::class.simpleName} not yet implemented in let")
         }
     }
@@ -1181,6 +1196,89 @@ private open class ExpressionGenerator(
     }
 
     private fun pushIntValue(value: Int) = pushInt(mv, value)
+
+    /**
+     * Bind pattern elements from a list without failure checking.
+     * Used for let destructuring where the pattern is expected to always match.
+     */
+    private fun compileListPatternBindings(pattern: ListPattern, listSlot: Int) {
+        // Get size for rest patterns
+        mv.visitVarInsn(ALOAD, listSlot)
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL,
+            LIST_VALUE_TYPE,
+            "size",
+            "()I",
+            false
+        )
+        val sizeSlot = allocateSlot()
+        mv.visitVarInsn(ISTORE, sizeSlot)
+
+        var elementIndex = 0
+        for (element in pattern.elements) {
+            when (element) {
+                is RestPattern -> {
+                    // Capture remaining elements as a list
+                    if (element.name != null) {
+                        mv.visitVarInsn(ALOAD, listSlot)
+                        pushIntValue(elementIndex)
+                        mv.visitVarInsn(ILOAD, sizeSlot)
+                        mv.visitMethodInsn(
+                            INVOKEVIRTUAL,
+                            LIST_VALUE_TYPE,
+                            "slice",
+                            "(II)L${LIST_VALUE_TYPE};",
+                            false
+                        )
+                        val slot = allocateSlot()
+                        declareBinding(element.name, slot, isMutable = false)
+                        mv.visitVarInsn(ASTORE, slot)
+                    }
+                    break
+                }
+                is BindingPattern -> {
+                    // Get element at index and bind
+                    mv.visitVarInsn(ALOAD, listSlot)
+                    pushIntValue(elementIndex)
+                    mv.visitMethodInsn(
+                        INVOKEVIRTUAL,
+                        LIST_VALUE_TYPE,
+                        "get",
+                        "(I)L${VALUE_TYPE};",
+                        false
+                    )
+                    val slot = allocateSlot()
+                    declareBinding(element.name, slot, isMutable = false)
+                    mv.visitVarInsn(ASTORE, slot)
+                    elementIndex++
+                }
+                is WildcardPattern -> {
+                    elementIndex++
+                }
+                is ListPattern -> {
+                    // Nested list: get element, cast, and recursively bind
+                    mv.visitVarInsn(ALOAD, listSlot)
+                    pushIntValue(elementIndex)
+                    mv.visitMethodInsn(
+                        INVOKEVIRTUAL,
+                        LIST_VALUE_TYPE,
+                        "get",
+                        "(I)L${VALUE_TYPE};",
+                        false
+                    )
+                    mv.visitTypeInsn(CHECKCAST, LIST_VALUE_TYPE)
+                    val nestedSlot = allocateSlot()
+                    mv.visitVarInsn(ASTORE, nestedSlot)
+                    compileListPatternBindings(element, nestedSlot)
+                    elementIndex++
+                }
+                is LiteralPattern, is RangePattern -> {
+                    // Skip literal/range patterns in binding context (no variable to bind)
+                    elementIndex++
+                }
+            }
+        }
+    }
 
     private fun compileListLiteral(expr: ListLiteralExpr) {
         // Create a new PersistentList builder

@@ -1666,4 +1666,41 @@ class CodegenTest {
             eval("type(_ + 1)") shouldBe StringValue("Function")
         }
     }
+
+    @Nested
+    inner class LambdaDestructuring {
+        @Test
+        fun `destructure list param in lambda`() {
+            eval("let f = |[a, b]| a + b; f([1, 2])") shouldBe IntValue(3)
+        }
+
+        @Test
+        fun `destructure in map`() {
+            val result = eval("[[1, 2], [3, 4]] |> map(|[a, b]| a + b)") as ListValue
+            result.size() shouldBe 2
+            result.get(0) shouldBe IntValue(3)
+            result.get(1) shouldBe IntValue(7)
+        }
+
+        @Test
+        fun `destructure with rest`() {
+            eval("let f = |[head, ..tail]| size(tail); f([1, 2, 3, 4])") shouldBe IntValue(3)
+        }
+
+        @Test
+        fun `mixed destructure and regular params`() {
+            eval("let f = |[a, b], c| a + b + c; f([1, 2], 3)") shouldBe IntValue(6)
+        }
+
+        @Test
+        fun `nested destructuring`() {
+            eval("let f = |[[a, b], c]| a + b + c; f([[1, 2], 3])") shouldBe IntValue(6)
+        }
+
+        @Test
+        fun `destructure in fold_s`() {
+            // fold_s returns first element of final state, not the whole list
+            eval("fold_s([0, 0], |[total, cnt], x| [total + x, cnt + 1], [1, 2, 3])") shouldBe IntValue(6)
+        }
+    }
 }

@@ -322,6 +322,10 @@ class Parser(private val tokens: List<Token>) {
                 hasRest = true
             } else if (match(TokenType.UNDERSCORE)) {
                 params.add(PlaceholderParam)
+            } else if (check(TokenType.LBRACKET)) {
+                // Parse destructuring pattern parameter: |[a, b]| ...
+                val pattern = parsePattern()
+                params.add(PatternParam(pattern))
             } else {
                 val nameToken = expect(TokenType.IDENTIFIER, "Expected parameter name")
                 params.add(NamedParam(nameToken.lexeme))

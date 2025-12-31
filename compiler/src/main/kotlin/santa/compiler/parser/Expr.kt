@@ -290,16 +290,22 @@ data class SpreadArgument(
 
 sealed interface Param
 
-
 data class NamedParam(
     val name: String,
 ) : Param
 
 object PlaceholderParam : Param
 
-
 data class RestParam(
     val name: String,
+) : Param
+
+/**
+ * A parameter with pattern destructuring: `|[a, b]| ...`
+ * The pattern is matched against the incoming argument.
+ */
+data class PatternParam(
+    val pattern: Pattern,
 ) : Param
 
 enum class UnaryOperator {

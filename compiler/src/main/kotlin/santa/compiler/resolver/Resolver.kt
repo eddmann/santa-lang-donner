@@ -232,6 +232,7 @@ class Resolver(
                 is NamedParam -> declareName(param.name)
                 is RestParam -> declareName(param.name)
                 PlaceholderParam -> {}
+                is PatternParam -> declarePattern(param.pattern)
             }
         }
     }

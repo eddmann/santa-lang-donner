@@ -102,6 +102,7 @@ object ExprRenderer {
                 is NamedParam -> param.name
                 is RestParam -> "..${param.name}"
                 PlaceholderParam -> "_"
+                is PatternParam -> renderPattern(param.pattern)
             }
         }
     }

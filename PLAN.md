@@ -306,10 +306,10 @@ See `AOC_COMPATIBILITY.md` for detailed analysis.
 LANG.txt: Sections 2.4, 6.4, 8.3, 9, 10, 13
 
 Release Gate 16
-- [ ] Multiline string literals (allow `\n` in strings, or add raw string syntax)
-- [ ] Collection slicing with ranges (`xs[1..3]`, `s[0..5]`)
-- [ ] Placeholder expressions (`_ + 1` → `|x| x + 1`)
-- [ ] Destructuring in lambda parameters (`|[a, b]| a + b`)
+- [x] Multiline string literals (allow `\n` in strings, or add raw string syntax)
+- [x] Collection slicing with ranges (`xs[1..3]`, `s[0..5]`)
+- [x] Placeholder expressions (`_ + 1` → `|x| x + 1`)
+- [x] Destructuring in lambda parameters (`|[a, b]| a + b`)
 - [ ] Dict shorthand codegen (`#{items, op}` where `items`/`op` are identifiers)
 - [ ] AOC URL read support (`read("aoc://2022/1")` → fetch/cache puzzle input)
 - [ ] Memoize with recursive self-reference (`let fib = memoize |n| ... fib(n-1) ...`)
