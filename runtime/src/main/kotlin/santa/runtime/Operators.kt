@@ -209,21 +209,41 @@ object Operators {
     /**
      * Index operator: target[index]
      * - Lists: get element at index (negative indices count from end, out of bounds = nil)
+     *          or slice with range (target[1..3])
      * - Strings: get grapheme cluster at index (negative indices count from end, out of bounds = nil)
+     *            or slice with range (target[1..3])
      * - Dictionaries: get value for key (missing key = nil)
      */
     @JvmStatic
     fun index(target: Value, index: Value): Value = when (target) {
         is ListValue -> when (index) {
             is IntValue -> target.get(index.value.toInt())
-            else -> throw SantaRuntimeException("List index must be Integer, got ${index.typeName()}")
+            is RangeValue -> {
+                val start = index.getStart().toInt()
+                val end = if (index.isUnbounded()) {
+                    target.size()
+                } else {
+                    index.getEndExclusive()!!.toInt()
+                }
+                target.slice(start, end)
+            }
+            else -> throw SantaRuntimeException("List index must be Integer or Range, got ${index.typeName()}")
         }
         is StringValue -> when (index) {
             is IntValue -> {
                 val grapheme = target.graphemeAt(index.value.toInt())
                 if (grapheme != null) StringValue(grapheme) else NilValue
             }
-            else -> throw SantaRuntimeException("String index must be Integer, got ${index.typeName()}")
+            is RangeValue -> {
+                val start = index.getStart().toInt()
+                val end = if (index.isUnbounded()) {
+                    target.graphemeLength()
+                } else {
+                    index.getEndExclusive()!!.toInt()
+                }
+                StringValue(target.graphemeSlice(start, end))
+            }
+            else -> throw SantaRuntimeException("String index must be Integer or Range, got ${index.typeName()}")
         }
         is DictValue -> target.get(index)
         else -> throw SantaRuntimeException("Cannot index ${target.typeName()}")

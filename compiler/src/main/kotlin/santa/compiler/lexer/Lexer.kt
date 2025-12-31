@@ -115,9 +115,7 @@ class Lexer(source: String) {
                 isClosed = true
                 break
             }
-            if (c == '\n') {
-                throw LexingException("Unterminated string literal", start)
-            }
+            // Allow newlines in strings - multiline strings are supported
             if (c == '\\') {
                 if (isAtEnd()) {
                     throw LexingException("Unterminated string literal", start)

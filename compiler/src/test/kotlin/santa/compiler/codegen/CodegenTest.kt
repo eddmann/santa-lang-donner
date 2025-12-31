@@ -363,6 +363,47 @@ class CodegenTest {
             eval("\"hello\"[0]") shouldBe StringValue("h")
             eval("\"hello\"[-1]") shouldBe StringValue("o")
         }
+
+        @Test
+        fun `list slicing with exclusive range`() {
+            val result = eval("[10, 20, 30, 40, 50][1..3]") as ListValue
+            result.size() shouldBe 2
+            result.get(0) shouldBe IntValue(20)
+            result.get(1) shouldBe IntValue(30)
+        }
+
+        @Test
+        fun `list slicing with inclusive range`() {
+            val result = eval("[10, 20, 30, 40, 50][1..=3]") as ListValue
+            result.size() shouldBe 3
+            result.get(0) shouldBe IntValue(20)
+            result.get(1) shouldBe IntValue(30)
+            result.get(2) shouldBe IntValue(40)
+        }
+
+        @Test
+        fun `list slicing with unbounded range`() {
+            val result = eval("[10, 20, 30, 40, 50][2..]") as ListValue
+            result.size() shouldBe 3
+            result.get(0) shouldBe IntValue(30)
+            result.get(1) shouldBe IntValue(40)
+            result.get(2) shouldBe IntValue(50)
+        }
+
+        @Test
+        fun `string slicing with exclusive range`() {
+            eval("\"hello\"[1..4]") shouldBe StringValue("ell")
+        }
+
+        @Test
+        fun `string slicing with inclusive range`() {
+            eval("\"hello\"[1..=3]") shouldBe StringValue("ell")
+        }
+
+        @Test
+        fun `string slicing with unbounded range`() {
+            eval("\"hello\"[2..]") shouldBe StringValue("llo")
+        }
     }
 
     @Nested

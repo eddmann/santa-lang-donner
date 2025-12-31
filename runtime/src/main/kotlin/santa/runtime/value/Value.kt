@@ -287,6 +287,12 @@ class RangeValue private constructor(
 
     fun isUnbounded(): Boolean = endExclusive == null
 
+    /** Get the start of the range. */
+    fun getStart(): Long = start
+
+    /** Get the exclusive end of the range (null for unbounded). */
+    fun getEndExclusive(): Long? = endExclusive
+
     /** Convert bounded range to list. Throws for unbounded ranges. */
     fun toList(): List<Long> {
         require(endExclusive != null) { "Cannot convert unbounded range to list" }
