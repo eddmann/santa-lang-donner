@@ -188,11 +188,11 @@ Release Gate 6
 LANG.txt: Sections 4, 6, 14
 
 Release Gate 7
-- [ ] Bytecode for literals, locals, blocks
-- [ ] Arithmetic, comparison, logical ops
-- [ ] Indexing and slicing
-- [ ] Function call conventions
-- [ ] Compile+run tests for core expressions
+- [x] Bytecode for literals, locals, blocks
+- [x] Arithmetic, comparison, logical ops
+- [x] Indexing and slicing
+- [x] Function call conventions
+- [x] Compile+run tests for core expressions
 
 ---
 

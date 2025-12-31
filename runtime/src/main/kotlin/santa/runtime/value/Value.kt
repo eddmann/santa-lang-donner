@@ -32,6 +32,12 @@ data class IntValue(val value: Long) : Value {
     override fun isTruthy(): Boolean = value != 0L
     override fun isHashable(): Boolean = true
     override fun typeName(): String = "Integer"
+
+    companion object {
+        /** Factory method for bytecode generation - boxes a primitive long. */
+        @JvmStatic
+        fun box(value: Long): IntValue = IntValue(value)
+    }
 }
 
 /** 64-bit floating-point value (LANG.txt §3.2) */
@@ -39,6 +45,12 @@ data class DecimalValue(val value: Double) : Value {
     override fun isTruthy(): Boolean = value != 0.0
     override fun isHashable(): Boolean = true
     override fun typeName(): String = "Decimal"
+
+    companion object {
+        /** Factory method for bytecode generation - boxes a primitive double. */
+        @JvmStatic
+        fun box(value: Double): DecimalValue = DecimalValue(value)
+    }
 }
 
 /** UTF-8 encoded string with grapheme-cluster indexing (LANG.txt §3.3) */
@@ -101,6 +113,12 @@ data class StringValue(val value: String) : Value {
         }
         return graphemes
     }
+
+    companion object {
+        /** Factory method for bytecode generation - boxes a String. */
+        @JvmStatic
+        fun box(value: String): StringValue = StringValue(value)
+    }
 }
 
 /** Boolean value (LANG.txt §2.5) */
@@ -108,6 +126,20 @@ data class BoolValue(val value: Boolean) : Value {
     override fun isTruthy(): Boolean = value
     override fun isHashable(): Boolean = true
     override fun typeName(): String = "Boolean"
+
+    companion object {
+        /** Singleton true value for bytecode generation. */
+        @JvmField
+        val TRUE: BoolValue = BoolValue(true)
+
+        /** Singleton false value for bytecode generation. */
+        @JvmField
+        val FALSE: BoolValue = BoolValue(false)
+
+        /** Factory method for bytecode generation - returns cached singleton. */
+        @JvmStatic
+        fun box(value: Boolean): BoolValue = if (value) TRUE else FALSE
+    }
 }
 
 /** Singleton representing the absence of a value (LANG.txt §3.10) */
@@ -158,6 +190,12 @@ data class ListValue(val elements: PersistentList<Value>) : Value {
         } else {
             ListValue(elements.subList(clampedStart, clampedEnd).toPersistentList())
         }
+    }
+
+    companion object {
+        /** Factory method for bytecode generation - wraps a PersistentList. */
+        @JvmStatic
+        fun box(elements: PersistentList<Value>): ListValue = ListValue(elements)
     }
 }
 
