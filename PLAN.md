@@ -225,9 +225,10 @@ Release Gate 9
 LANG.txt: Appendix B
 
 Release Gate 10
-- [ ] All remaining built-ins implemented
-- [ ] Regex and md5 built-ins validated
-- [ ] Built-in test suite green
+- [x] All remaining built-ins implemented
+- [x] Regex and md5 built-ins validated
+- [x] Built-in test suite green
+- [ ] evaluate built-in (deferred - requires full compiler embedding)
 
 ---
 

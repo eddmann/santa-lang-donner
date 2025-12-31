@@ -559,6 +559,20 @@ class CodegenTest {
             result.get(2) shouldBe IntValue(6)
         }
 
+        @Test
+        fun `fold_s returns first element of final state`() {
+            // Fibonacci using state: [fib_n, fib_n-1]
+            // state[0] = fib_n, state[1] = fib_n-1
+            // After 10 iterations from [0, 1]: 0,1,1,2,3,5,8,13,21,34,55
+            eval("fold_s([0, 1], |state, _| [state[1], state[0] + state[1]], [1, 2, 3, 4, 5, 6, 7, 8, 9, 10])") shouldBe IntValue(55)
+        }
+
+        @Test
+        fun `fold_s with simple state tracking`() {
+            // Track sum and count: [sum, count] -> returns sum
+            eval("fold_s([0, 0], |state, x| [state[0] + x, state[1] + 1], [1, 2, 3])") shouldBe IntValue(6)
+        }
+
         // Search tests
         @Test
         fun `find returns first match`() {
@@ -688,6 +702,93 @@ class CodegenTest {
             eval("join(\", \", [1, 2, 3])") shouldBe StringValue("1, 2, 3")
         }
 
+        // Regex tests
+        @Test
+        fun `regex_match single capture group`() {
+            val result = eval("""regex_match("(\\d+)", "abc123")""") as ListValue
+            result.size() shouldBe 1
+            result.get(0) shouldBe StringValue("123")
+        }
+
+        @Test
+        fun `regex_match multiple capture groups`() {
+            val result = eval("""regex_match("(\\w+):(\\d+)", "port:8080")""") as ListValue
+            result.size() shouldBe 2
+            result.get(0) shouldBe StringValue("port")
+            result.get(1) shouldBe StringValue("8080")
+        }
+
+        @Test
+        fun `regex_match no capture groups returns empty list`() {
+            val result = eval("""regex_match("\\d+", "abc123")""") as ListValue
+            result.size() shouldBe 0
+        }
+
+        @Test
+        fun `regex_match no match returns empty list`() {
+            val result = eval("""regex_match("(\\d+)", "no numbers")""") as ListValue
+            result.size() shouldBe 0
+        }
+
+        @Test
+        fun `regex_match_all finds all occurrences`() {
+            val result = eval("""regex_match_all("\\d+", "a1b2c3")""") as ListValue
+            result.size() shouldBe 3
+            result.get(0) shouldBe StringValue("1")
+            result.get(1) shouldBe StringValue("2")
+            result.get(2) shouldBe StringValue("3")
+        }
+
+        @Test
+        fun `regex_match_all finds words`() {
+            val result = eval("""regex_match_all("\\w+", "hello world")""") as ListValue
+            result.size() shouldBe 2
+            result.get(0) shouldBe StringValue("hello")
+            result.get(1) shouldBe StringValue("world")
+        }
+
+        // MD5 tests
+        @Test
+        fun `md5 hashes hello`() {
+            eval("""md5("hello")""") shouldBe StringValue("5d41402abc4b2a76b9719d911017c592")
+        }
+
+        @Test
+        fun `md5 hashes empty string`() {
+            eval("""md5("")""") shouldBe StringValue("d41d8cd98f00b204e9800998ecf8427e")
+        }
+
+        @Test
+        fun `md5 hashes Santa`() {
+            eval("""md5("Santa")""") shouldBe StringValue("2f621a9cbf3a35ebd4a0b3b470124ba9")
+        }
+
+        // Memoize tests
+        @Test
+        fun `memoize returns a function`() {
+            val result = eval("let f = memoize(|x| x * 2); type(f)")
+            result shouldBe StringValue("Function")
+        }
+
+        @Test
+        fun `memoized function works correctly`() {
+            eval("let f = memoize(|x| x * 2); f(5)") shouldBe IntValue(10)
+        }
+
+        @Test
+        fun `memoized function caches results`() {
+            // Test memoize by calling same function twice with same argument
+            // and verifying results are consistent
+            val result = eval("""
+                let f = memoize(|x| x * x);
+                let a = f(5);
+                let b = f(5);
+                [a, b]
+            """.trimIndent()) as ListValue
+            result.get(0) shouldBe IntValue(25)
+            result.get(1) shouldBe IntValue(25)
+        }
+
         // Math function tests
         @Test
         fun `signum of positive`() {
@@ -709,6 +810,37 @@ class CodegenTest {
             val result = eval("vec_add([1, 2], [3, 4])") as ListValue
             result.get(0) shouldBe IntValue(4)
             result.get(1) shouldBe IntValue(6)
+        }
+
+        // Bitwise operation tests
+        @Test
+        fun `bit_and performs bitwise AND`() {
+            eval("bit_and(12, 10)") shouldBe IntValue(8)  // 1100 & 1010 = 1000
+        }
+
+        @Test
+        fun `bit_or performs bitwise OR`() {
+            eval("bit_or(12, 10)") shouldBe IntValue(14)  // 1100 | 1010 = 1110
+        }
+
+        @Test
+        fun `bit_xor performs bitwise XOR`() {
+            eval("bit_xor(12, 10)") shouldBe IntValue(6)  // 1100 ^ 1010 = 0110
+        }
+
+        @Test
+        fun `bit_not performs bitwise NOT`() {
+            eval("bit_not(12)") shouldBe IntValue(-13)  // bitwise complement
+        }
+
+        @Test
+        fun `bit_shift_left shifts left`() {
+            eval("bit_shift_left(1, 3)") shouldBe IntValue(8)  // 1 << 3 = 1000
+        }
+
+        @Test
+        fun `bit_shift_right shifts right`() {
+            eval("bit_shift_right(8, 2)") shouldBe IntValue(2)  // 1000 >> 2 = 10
         }
 
         // Utility tests

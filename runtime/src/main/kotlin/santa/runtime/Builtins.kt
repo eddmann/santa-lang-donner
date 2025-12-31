@@ -532,6 +532,65 @@ object Builtins {
         return StringValue(strings.joinToString(separator.value))
     }
 
+    /**
+     * regex_match(pattern, string) - Match and return capture groups only.
+     * Returns empty list if no match or no capture groups.
+     */
+    @JvmStatic
+    fun regex_match(pattern: Value, str: Value): Value {
+        if (pattern !is StringValue) {
+            throw SantaRuntimeException("regex_match: pattern must be String")
+        }
+        if (str !is StringValue) {
+            throw SantaRuntimeException("regex_match: second argument must be String")
+        }
+        val regex = try {
+            Regex(pattern.value)
+        } catch (e: Exception) {
+            throw SantaRuntimeException("regex_match: invalid regex pattern: ${e.message}")
+        }
+        val matchResult = regex.find(str.value) ?: return ListValue(persistentListOf())
+
+        // Return capture groups only (not the full match)
+        val groups = matchResult.groupValues.drop(1)  // Skip group 0 (full match)
+        val result = groups.map { StringValue(it) as Value }
+        return ListValue(result.toPersistentList())
+    }
+
+    /**
+     * regex_match_all(pattern, string) - Match all occurrences of pattern (entire match, not just groups).
+     */
+    @JvmStatic
+    fun regex_match_all(pattern: Value, str: Value): Value {
+        if (pattern !is StringValue) {
+            throw SantaRuntimeException("regex_match_all: pattern must be String")
+        }
+        if (str !is StringValue) {
+            throw SantaRuntimeException("regex_match_all: second argument must be String")
+        }
+        val regex = try {
+            Regex(pattern.value)
+        } catch (e: Exception) {
+            throw SantaRuntimeException("regex_match_all: invalid regex pattern: ${e.message}")
+        }
+        val matches = regex.findAll(str.value).map { StringValue(it.value) as Value }.toList()
+        return ListValue(matches.toPersistentList())
+    }
+
+    /**
+     * md5(string) - Return the MD5 hash of a string as a lowercase hexadecimal string.
+     */
+    @JvmStatic
+    fun md5(value: Value): Value {
+        if (value !is StringValue) {
+            throw SantaRuntimeException("md5: expected String, got ${value.typeName()}")
+        }
+        val md = java.security.MessageDigest.getInstance("MD5")
+        val digest = md.digest(value.value.toByteArray(Charsets.UTF_8))
+        val hexString = digest.joinToString("") { "%02x".format(it) }
+        return StringValue(hexString)
+    }
+
     // =========================================================================
     // Math Functions (LANG.txt §11.15)
     // =========================================================================
@@ -558,6 +617,69 @@ object Builtins {
             Operators.add(a.get(i), b.get(i))
         }
         return ListValue(result.toPersistentList())
+    }
+
+    // =========================================================================
+    // Bitwise Operations (LANG.txt §4.5)
+    // =========================================================================
+
+    /**
+     * bit_and(a, b) - Bitwise AND.
+     */
+    @JvmStatic
+    fun bit_and(a: Value, b: Value): Value {
+        if (a !is IntValue) throw SantaRuntimeException("bit_and: first argument must be Integer")
+        if (b !is IntValue) throw SantaRuntimeException("bit_and: second argument must be Integer")
+        return IntValue(a.value and b.value)
+    }
+
+    /**
+     * bit_or(a, b) - Bitwise OR.
+     */
+    @JvmStatic
+    fun bit_or(a: Value, b: Value): Value {
+        if (a !is IntValue) throw SantaRuntimeException("bit_or: first argument must be Integer")
+        if (b !is IntValue) throw SantaRuntimeException("bit_or: second argument must be Integer")
+        return IntValue(a.value or b.value)
+    }
+
+    /**
+     * bit_xor(a, b) - Bitwise XOR.
+     */
+    @JvmStatic
+    fun bit_xor(a: Value, b: Value): Value {
+        if (a !is IntValue) throw SantaRuntimeException("bit_xor: first argument must be Integer")
+        if (b !is IntValue) throw SantaRuntimeException("bit_xor: second argument must be Integer")
+        return IntValue(a.value xor b.value)
+    }
+
+    /**
+     * bit_not(value) - Bitwise NOT (complement).
+     */
+    @JvmStatic
+    fun bit_not(value: Value): Value {
+        if (value !is IntValue) throw SantaRuntimeException("bit_not: argument must be Integer")
+        return IntValue(value.value.inv())
+    }
+
+    /**
+     * bit_shift_left(value, shift) - Left shift.
+     */
+    @JvmStatic
+    fun bit_shift_left(value: Value, shift: Value): Value {
+        if (value !is IntValue) throw SantaRuntimeException("bit_shift_left: first argument must be Integer")
+        if (shift !is IntValue) throw SantaRuntimeException("bit_shift_left: second argument must be Integer")
+        return IntValue(value.value shl shift.value.toInt())
+    }
+
+    /**
+     * bit_shift_right(value, shift) - Right shift.
+     */
+    @JvmStatic
+    fun bit_shift_right(value: Value, shift: Value): Value {
+        if (value !is IntValue) throw SantaRuntimeException("bit_shift_right: first argument must be Integer")
+        if (shift !is IntValue) throw SantaRuntimeException("bit_shift_right: second argument must be Integer")
+        return IntValue(value.value shr shift.value.toInt())
     }
 
     // =========================================================================
@@ -822,6 +944,43 @@ object Builtins {
         }
         return items.fold(initial) { acc, elem ->
             folder.invoke(listOf(acc, elem))
+        }
+    }
+
+    /**
+     * fold_s(initial, folder, collection) - Fold with state.
+     * Initial is a list where first element is the result and remaining elements are state.
+     * Only the first element is returned at the end.
+     */
+    @JvmStatic
+    fun fold_s(initial: Value, folder: Value, collection: Value): Value {
+        if (folder !is FunctionValue) {
+            throw SantaRuntimeException("fold_s: folder must be a Function")
+        }
+        if (initial !is ListValue) {
+            throw SantaRuntimeException("fold_s: initial must be a List")
+        }
+        val items = when (collection) {
+            is ListValue -> collection.elements.asSequence()
+            is SetValue -> collection.elements.asSequence()
+            is DictValue -> collection.entries.values.asSequence()
+            is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
+            is RangeValue -> collection.asSequence()
+            is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
+            else -> throw SantaRuntimeException("fold_s: expected collection, got ${collection.typeName()}")
+        }
+        var state: Value = initial
+        for (elem in items) {
+            state = folder.invoke(listOf(state, elem))
+            if (state !is ListValue) {
+                throw SantaRuntimeException("fold_s: folder must return a List")
+            }
+        }
+        // Return first element of final state
+        return if (state is ListValue && state.size() > 0) {
+            state.get(0)
+        } else {
+            NilValue
         }
     }
 
@@ -1394,6 +1553,18 @@ object Builtins {
     @JvmStatic
     fun id(value: Value): Value = value
 
+    /**
+     * memoize(function) - Return a memoized version of the function.
+     * Caches results based on arguments.
+     */
+    @JvmStatic
+    fun memoize(function: Value): Value {
+        if (function !is FunctionValue) {
+            throw SantaRuntimeException("memoize: expected Function, got ${function.typeName()}")
+        }
+        return MemoizedFunctionValue(function)
+    }
+
     // =========================================================================
     // Helper functions
     // =========================================================================
@@ -1469,6 +1640,7 @@ object Builtins {
         // Reduction
         "reduce" to BuiltinInfo(2, Builtins::reduce),
         "fold" to BuiltinInfo(3, Builtins::fold),
+        "fold_s" to BuiltinInfo(3, Builtins::fold_s),
         "scan" to BuiltinInfo(3, Builtins::scan),
         "each" to BuiltinInfo(2, Builtins::each),
         // Search
@@ -1507,11 +1679,22 @@ object Builtins {
         "lower" to BuiltinInfo(1, Builtins::lower),
         "replace" to BuiltinInfo(3, Builtins::replace),
         "join" to BuiltinInfo(2, Builtins::join),
+        "regex_match" to BuiltinInfo(2, Builtins::regex_match),
+        "regex_match_all" to BuiltinInfo(2, Builtins::regex_match_all),
+        "md5" to BuiltinInfo(1, Builtins::md5),
         // Math
         "signum" to BuiltinInfo(1, Builtins::signum),
         "vec_add" to BuiltinInfo(2, Builtins::vec_add),
+        // Bitwise operations
+        "bit_and" to BuiltinInfo(2, Builtins::bit_and),
+        "bit_or" to BuiltinInfo(2, Builtins::bit_or),
+        "bit_xor" to BuiltinInfo(2, Builtins::bit_xor),
+        "bit_not" to BuiltinInfo(1, Builtins::bit_not),
+        "bit_shift_left" to BuiltinInfo(2, Builtins::bit_shift_left),
+        "bit_shift_right" to BuiltinInfo(2, Builtins::bit_shift_right),
         // Utility
         "id" to BuiltinInfo(1, Builtins::id),
+        "memoize" to BuiltinInfo(1, Builtins::memoize),
     )
 }
 

@@ -470,3 +470,16 @@ abstract class FunctionValue(val arity: Int = 0) : Value {
     /** Returns true if this function accepts variable number of arguments. */
     fun isVariadic(): Boolean = arity < 0
 }
+
+/**
+ * Memoized function wrapper (LANG.txt §11.16).
+ *
+ * Wraps another function and caches results based on argument lists.
+ */
+class MemoizedFunctionValue(private val wrapped: FunctionValue) : FunctionValue(wrapped.arity) {
+    private val cache = mutableMapOf<List<Value>, Value>()
+
+    override fun invoke(args: List<Value>): Value {
+        return cache.getOrPut(args) { wrapped.invoke(args) }
+    }
+}

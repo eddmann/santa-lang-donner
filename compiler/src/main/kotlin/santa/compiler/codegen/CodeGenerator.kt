@@ -1310,7 +1310,7 @@ private open class ExpressionGenerator(
             // Transformation
             "map", "filter", "flat_map", "filter_map", "find_map",
             // Reduction
-            "reduce", "fold", "scan", "each",
+            "reduce", "fold", "fold_s", "scan", "each",
             // Search
             "find", "count",
             // Aggregation
@@ -1325,10 +1325,13 @@ private open class ExpressionGenerator(
             "repeat", "cycle", "iterate", "zip", "combinations", "range",
             // String functions
             "lines", "split", "upper", "lower", "replace", "join",
+            "regex_match", "regex_match_all", "md5",
             // Math
             "signum", "vec_add",
+            // Bitwise operations
+            "bit_and", "bit_or", "bit_xor", "bit_not", "bit_shift_left", "bit_shift_right",
             // Utility
-            "id",
+            "id", "memoize",
         )
     }
 }
