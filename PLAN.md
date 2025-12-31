@@ -205,7 +205,7 @@ Release Gate 8
 - [x] Lambdas and closures with captured variables
 - [x] Rest parameters and spread (completed in Phase 15)
 - [x] Pipeline and composition behavior (completed in Phase 14)
-- [ ] Tail-call optimization strategy defined and tested (deferred)
+- [x] Tail-call optimization for self-recursion (loop transformation)
 
 ---
 

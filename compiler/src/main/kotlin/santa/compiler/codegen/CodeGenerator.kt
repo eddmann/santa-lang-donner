@@ -208,10 +208,32 @@ private class ClassGenerator(private val className: String) {
         )
         mv.visitCode()
 
+        // Check if this function is tail-recursive
+        val selfRefCapture = captures.find { it.isSelfRef }
+        val tailRecursionInfo = selfRefCapture?.let {
+            TailCallAnalyzer.analyzeTailRecursion(it.name, body)
+        }
+
+        if (tailRecursionInfo != null) {
+            // Generate tail-recursive loop-based code
+            generateTailRecursiveInvoke(mv, lambdaClassName, params, body, captures, tailRecursionInfo)
+        } else {
+            // Generate normal invoke code
+            generateNormalInvoke(mv, lambdaClassName, params, body, captures)
+        }
+
+        mv.visitMaxs(-1, -1)
+        mv.visitEnd()
+    }
+
+    private fun generateNormalInvoke(
+        mv: MethodVisitor,
+        lambdaClassName: String,
+        params: List<Param>,
+        body: Expr,
+        captures: List<CaptureInfo>,
+    ) {
         // Create expression generator for lambda body
-        // We need a special generator that knows about:
-        // 1. Captured variables (accessed via this.field)
-        // 2. Parameters (extracted from args list)
         val exprGen = LambdaExpressionGenerator(mv, lambdaClassName, params, captures, this::generateLambdaClass)
 
         // Wrap body in try-catch for ReturnException to support early return
@@ -233,8 +255,44 @@ private class ClassGenerator(private val className: String) {
         // Stack has ReturnException, get its value field
         mv.visitFieldInsn(GETFIELD, RETURN_EXCEPTION_TYPE, "value", "L${VALUE_TYPE};")
         mv.visitInsn(ARETURN)
-        mv.visitMaxs(-1, -1)
-        mv.visitEnd()
+    }
+
+    private fun generateTailRecursiveInvoke(
+        mv: MethodVisitor,
+        lambdaClassName: String,
+        params: List<Param>,
+        body: Expr,
+        captures: List<CaptureInfo>,
+        tailRecursionInfo: TailRecursionInfo,
+    ) {
+        // Create specialized expression generator that handles tail calls as loop iterations
+        val loopStartLabel = Label()
+        val exprGen = TailRecursiveLambdaExpressionGenerator(
+            mv, lambdaClassName, params, captures, this::generateLambdaClass,
+            tailRecursionInfo, loopStartLabel
+        )
+
+        // Wrap body in try-catch for ReturnException to support early return
+        val tryStart = Label()
+        val tryEnd = Label()
+        val catchHandler = Label()
+
+        mv.visitTryCatchBlock(tryStart, tryEnd, catchHandler, RETURN_EXCEPTION_TYPE)
+
+        // Loop start label - tail calls will jump back here
+        mv.visitLabel(loopStartLabel)
+
+        mv.visitLabel(tryStart)
+        // Compile the body - tail calls will update params and goto loopStartLabel
+        exprGen.compileExpr(body)
+        mv.visitLabel(tryEnd)
+        // Normal exit - return the body's value (for non-tail-call return paths)
+        mv.visitInsn(ARETURN)
+
+        // Catch ReturnException and extract its value, then return it
+        mv.visitLabel(catchHandler)
+        mv.visitFieldInsn(GETFIELD, RETURN_EXCEPTION_TYPE, "value", "L${VALUE_TYPE};")
+        mv.visitInsn(ARETURN)
     }
 
     companion object {
@@ -1737,7 +1795,7 @@ private open class ExpressionGenerator(
  * Generates bytecode for expressions inside lambda bodies.
  * Handles parameter access and captured variable access.
  */
-private class LambdaExpressionGenerator(
+private open class LambdaExpressionGenerator(
     mv: MethodVisitor,
     private val lambdaClassName: String,
     private val params: List<Param>,
@@ -1841,6 +1899,96 @@ private class LambdaExpressionGenerator(
             }
             else -> super.compileExpr(expr)
         }
+    }
+}
+
+/**
+ * Generates bytecode for tail-recursive lambda bodies.
+ *
+ * Handles tail-recursive calls by:
+ * 1. Evaluating new argument values
+ * 2. Storing them in the parameter slots (updating in place)
+ * 3. Jumping back to the loop start label
+ *
+ * This avoids stack growth for tail-recursive functions, enabling deep recursion
+ * without StackOverflowError.
+ */
+private class TailRecursiveLambdaExpressionGenerator(
+    mv: MethodVisitor,
+    lambdaClassName: String,
+    params: List<Param>,
+    captures: List<CaptureInfo>,
+    lambdaGenerator: LambdaGenerator,
+    private val tailRecursionInfo: TailRecursionInfo,
+    private val loopStartLabel: Label,
+) : LambdaExpressionGenerator(mv, lambdaClassName, params, captures, lambdaGenerator) {
+
+    // Store the parameter slots for updating during tail calls
+    private val paramSlots: List<Int>
+
+    init {
+        // Capture the parameter slots that were allocated by the parent class
+        val namedParams = params.filterIsInstance<NamedParam>()
+        paramSlots = namedParams.map { param ->
+            lookupBinding(param.name)?.slot
+                ?: throw CodegenException("Parameter ${param.name} not found in scope")
+        }
+    }
+
+    override fun compileExpr(expr: Expr) {
+        when (expr) {
+            is CallExpr -> {
+                // Check if this is a tail-recursive call
+                val callee = expr.callee
+                if (callee is IdentifierExpr &&
+                    callee.name == tailRecursionInfo.funcName &&
+                    expr in tailRecursionInfo.tailCalls
+                ) {
+                    // This is a tail call - compile as loop iteration
+                    compileTailCall(expr)
+                } else {
+                    // Normal call
+                    super.compileExpr(expr)
+                }
+            }
+            else -> super.compileExpr(expr)
+        }
+    }
+
+    /**
+     * Compiles a tail-recursive call as a loop iteration.
+     *
+     * Instead of actually calling the function, we:
+     * 1. Evaluate all new argument values (storing in temp slots to handle dependencies)
+     * 2. Copy from temp slots to parameter slots
+     * 3. Jump back to the loop start
+     */
+    private fun compileTailCall(call: CallExpr) {
+        val args = call.arguments.filterIsInstance<ExprArgument>()
+
+        if (args.size != paramSlots.size) {
+            throw CodegenException(
+                "Tail call argument count mismatch: expected ${paramSlots.size}, got ${args.size}"
+            )
+        }
+
+        // Evaluate all arguments first and store in temporary slots
+        // This is necessary because arg expressions may reference current param values
+        val tempSlots = args.map { arg ->
+            compileExpr(arg.expr)
+            val tempSlot = allocateSlot()
+            mv.visitVarInsn(ASTORE, tempSlot)
+            tempSlot
+        }
+
+        // Copy from temp slots to parameter slots
+        for ((paramSlot, tempSlot) in paramSlots.zip(tempSlots)) {
+            mv.visitVarInsn(ALOAD, tempSlot)
+            mv.visitVarInsn(ASTORE, paramSlot)
+        }
+
+        // Jump back to loop start
+        mv.visitJumpInsn(GOTO, loopStartLabel)
     }
 }
 
