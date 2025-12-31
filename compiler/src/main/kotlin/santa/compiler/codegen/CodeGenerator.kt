@@ -375,7 +375,9 @@ private open class ExpressionGenerator(
             is UnaryExpr -> compileUnaryExpr(expr)
             is BinaryExpr -> compileBinaryExpr(expr)
             is IdentifierExpr -> compileIdentifier(expr)
-            is PlaceholderExpr -> TODO("Placeholders not yet implemented")
+            is PlaceholderExpr -> throw IllegalStateException(
+                "PlaceholderExpr should have been desugared before codegen"
+            )
             is ListLiteralExpr -> compileListLiteral(expr)
             is SetLiteralExpr -> compileSetLiteral(expr)
             is DictLiteralExpr -> compileDictLiteral(expr)

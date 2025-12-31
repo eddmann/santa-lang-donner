@@ -1610,4 +1610,60 @@ class CodegenTest {
             eval("type((|x| x + 1) >> (|x| x * 2))") shouldBe StringValue("Function")
         }
     }
+
+    @Nested
+    inner class PlaceholderExpressions {
+        @Test
+        fun `placeholder in addition`() {
+            eval("let inc = _ + 1; inc(5)") shouldBe IntValue(6)
+        }
+
+        @Test
+        fun `placeholder in subtraction`() {
+            eval("let dec = _ - 1; dec(10)") shouldBe IntValue(9)
+        }
+
+        @Test
+        fun `placeholder in multiplication`() {
+            eval("let double = _ * 2; double(4)") shouldBe IntValue(8)
+        }
+
+        @Test
+        fun `placeholder on right side`() {
+            eval("let sub_from_10 = 10 - _; sub_from_10(3)") shouldBe IntValue(7)
+        }
+
+        @Test
+        fun `two placeholders create binary function`() {
+            eval("let divide = _ / _; divide(10, 2)") shouldBe IntValue(5)
+        }
+
+        @Test
+        fun `placeholder with unary negation`() {
+            eval("let negate = -_; negate(5)") shouldBe IntValue(-5)
+        }
+
+        @Test
+        fun `placeholder in map`() {
+            val result = eval("[1, 2, 3] |> map(_ * 2)") as ListValue
+            result.size() shouldBe 3
+            result.get(0) shouldBe IntValue(2)
+            result.get(1) shouldBe IntValue(4)
+            result.get(2) shouldBe IntValue(6)
+        }
+
+        @Test
+        fun `placeholder in filter`() {
+            val result = eval("[1, 2, 3, 4, 5] |> filter(_ > 2)") as ListValue
+            result.size() shouldBe 3
+            result.get(0) shouldBe IntValue(3)
+            result.get(1) shouldBe IntValue(4)
+            result.get(2) shouldBe IntValue(5)
+        }
+
+        @Test
+        fun `placeholder creates function type`() {
+            eval("type(_ + 1)") shouldBe StringValue("Function")
+        }
+    }
 }
