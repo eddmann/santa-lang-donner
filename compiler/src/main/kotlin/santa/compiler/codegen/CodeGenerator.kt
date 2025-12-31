@@ -29,6 +29,7 @@ object CodeGenerator {
 private data class CaptureInfo(
     val name: String,
     val slot: Int,  // Slot in the enclosing scope
+    val isSelfRef: Boolean = false,  // True if this is a self-reference for recursion
 )
 
 private class ClassGenerator(private val className: String) {
@@ -134,8 +135,9 @@ private class ClassGenerator(private val className: String) {
             null
         )
 
-        // Generate fields for captured variables
-        for (capture in captures) {
+        // Generate fields for captured variables (excluding self-references which use base class field)
+        val nonSelfCaptures = captures.filter { !it.isSelfRef }
+        for (capture in nonSelfCaptures) {
             lcw.visitField(
                 ACC_PRIVATE or ACC_FINAL,
                 capture.name,
@@ -146,7 +148,7 @@ private class ClassGenerator(private val className: String) {
         }
 
         // Generate constructor
-        generateLambdaConstructor(lcw, lambdaClassName, params, captures)
+        generateLambdaConstructor(lcw, lambdaClassName, params, nonSelfCaptures)
 
         // Generate invoke method
         generateLambdaInvoke(lcw, lambdaClassName, params, body, captures)
@@ -288,6 +290,9 @@ private open class ExpressionGenerator(
     // Scope stack: each scope is a map of name -> LocalBinding
     protected val scopes = ArrayDeque<MutableMap<String, LocalBinding>>()
     protected var nextSlot = 0
+
+    // Tracks the name of a self-referential binding being compiled (for recursive functions)
+    protected var currentSelfRefName: String? = null
 
     init {
         pushScope()
@@ -611,17 +616,67 @@ private open class ExpressionGenerator(
     }
 
     private fun compileLetStatement(expr: LetExpr) {
-        // Compile the value first
-        compileExpr(expr.value)
-
         // Handle the pattern (for now, just simple binding patterns)
         when (val pattern = expr.pattern) {
             is BindingPattern -> {
                 val slot = allocateSlot()
-                declareBinding(pattern.name, slot, expr.isMutable)
-                mv.visitVarInsn(ASTORE, slot)
-                // Let statement as expression returns nil
-                pushNil()
+
+                // Check if this is a self-referential function binding
+                val funcExpr = expr.value as? FunctionExpr
+                val isSelfReferential = if (funcExpr != null) {
+                    val freeVars = findFreeVariables(funcExpr.body, funcExpr.params)
+                    pattern.name in freeVars
+                } else {
+                    false
+                }
+
+                if (isSelfReferential) {
+                    // For self-referential functions, we need to:
+                    // 1. Create a placeholder (nil) in the slot first
+                    // 2. Declare the binding
+                    // 3. Compile the function (which will capture the slot)
+                    // 4. Store the function in the slot
+                    // 5. Update the closure's self-reference
+
+                    // Push nil as placeholder and store
+                    pushNil()
+                    mv.visitVarInsn(ASTORE, slot)
+
+                    // Declare binding so the function can find it during compilation
+                    declareBinding(pattern.name, slot, expr.isMutable)
+
+                    // Set context for self-reference and compile the function expression
+                    currentSelfRefName = pattern.name
+                    compileExpr(funcExpr!!)
+                    currentSelfRefName = null
+
+                    // Duplicate the function value (one for storage, one for setSelfRef call)
+                    mv.visitInsn(DUP)
+
+                    // Store in slot
+                    mv.visitVarInsn(ASTORE, slot)
+
+                    // Call setSelfRef on the function to update its captured self-reference
+                    // Stack: function
+                    // Load the stored function again for the argument
+                    mv.visitVarInsn(ALOAD, slot)
+                    mv.visitMethodInsn(
+                        INVOKEVIRTUAL,
+                        FUNCTION_VALUE_TYPE,
+                        "setSelfRef",
+                        "(L${VALUE_TYPE};)V",
+                        false
+                    )
+
+                    // Let statement as expression returns nil
+                    pushNil()
+                } else {
+                    // Non-self-referential binding: standard approach
+                    compileExpr(expr.value)
+                    declareBinding(pattern.name, slot, expr.isMutable)
+                    mv.visitVarInsn(ASTORE, slot)
+                    pushNil()
+                }
             }
             else -> TODO("Pattern ${pattern::class.simpleName} not yet implemented in let")
         }
@@ -1196,7 +1251,7 @@ private open class ExpressionGenerator(
         val freeVars = findFreeVariables(expr.body, expr.params)
         val captures = freeVars.mapNotNull { name ->
             lookupBinding(name)?.let { binding ->
-                CaptureInfo(name, binding.slot)
+                CaptureInfo(name, binding.slot, isSelfRef = name == currentSelfRefName)
             }
         }
 
@@ -1207,15 +1262,16 @@ private open class ExpressionGenerator(
         mv.visitTypeInsn(NEW, lambdaClassName)
         mv.visitInsn(DUP)
 
-        // Push captured values
-        for (capture in captures) {
+        // Push captured values (excluding self-references which use base class selfRef field)
+        val nonSelfCaptures = captures.filter { !it.isSelfRef }
+        for (capture in nonSelfCaptures) {
             mv.visitVarInsn(ALOAD, capture.slot)
         }
 
         // Constructor descriptor
         val constructorDesc = buildString {
             append('(')
-            repeat(captures.size) { append("L${VALUE_TYPE};") }
+            repeat(nonSelfCaptures.size) { append("L${VALUE_TYPE};") }
             append(")V")
         }
 
@@ -1650,14 +1706,25 @@ private class LambdaExpressionGenerator(
                 // Check if it's a captured variable
                 val capture = captures.find { it.name == expr.name }
                 if (capture != null) {
-                    // Load from this.fieldName
-                    mv.visitVarInsn(ALOAD, 0) // this
-                    mv.visitFieldInsn(
-                        GETFIELD,
-                        lambdaClassName,
-                        capture.name,
-                        "L${VALUE_TYPE};"
-                    )
+                    if (capture.isSelfRef) {
+                        // Load from this.selfRef (base class field for recursive self-reference)
+                        mv.visitVarInsn(ALOAD, 0) // this
+                        mv.visitFieldInsn(
+                            GETFIELD,
+                            FUNCTION_VALUE_TYPE,
+                            "selfRef",
+                            "L${VALUE_TYPE};"
+                        )
+                    } else {
+                        // Load from this.fieldName
+                        mv.visitVarInsn(ALOAD, 0) // this
+                        mv.visitFieldInsn(
+                            GETFIELD,
+                            lambdaClassName,
+                            capture.name,
+                            "L${VALUE_TYPE};"
+                        )
+                    }
                 } else {
                     // Fall back to local variable lookup
                     super.compileExpr(expr)

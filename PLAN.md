@@ -280,7 +280,7 @@ Release Gate 14
 - [x] Return statements (exception-based early return from functions)
 - [x] Break statements (exception-based early exit from iterations)
 - [x] Range expressions (exclusive, inclusive, unbounded)
-- [ ] Recursive function self-reference (deferred)
+- [x] Recursive function self-reference
 
 ---
 

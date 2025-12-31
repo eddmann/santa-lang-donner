@@ -1090,14 +1090,30 @@ class CodegenTest {
             eval("let apply = |f, x| f(x); let double = |x| x * 2; apply(double, 5)") shouldBe IntValue(10)
         }
 
-        // TODO: Recursive functions require resolver changes to allow self-reference
-        // @Test
-        // fun `recursive function`() {
-        //     eval("""
-        //         let factorial = |n| if n == 0 { 1 } else { n * factorial(n - 1) };
-        //         factorial(5)
-        //     """.trimIndent()) shouldBe IntValue(120)
-        // }
+        @Test
+        fun `recursive function - factorial`() {
+            eval("""
+                let factorial = |n| if n == 0 { 1 } else { n * factorial(n - 1) };
+                factorial(5)
+            """.trimIndent()) shouldBe IntValue(120)
+        }
+
+        @Test
+        fun `recursive function - fibonacci`() {
+            eval("""
+                let fib = |n| if n < 2 { n } else { fib(n - 1) + fib(n - 2) };
+                fib(10)
+            """.trimIndent()) shouldBe IntValue(55)
+        }
+
+        @Test
+        fun `recursive function with other captures`() {
+            eval("""
+                let multiplier = 2;
+                let times = |n| if n == 0 { 0 } else { multiplier + times(n - 1) };
+                times(5)
+            """.trimIndent()) shouldBe IntValue(10)
+        }
 
         @Test
         fun `function is truthy`() {

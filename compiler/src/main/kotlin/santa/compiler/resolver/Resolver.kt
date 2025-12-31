@@ -123,8 +123,18 @@ class Resolver(
     }
 
     private fun resolveLetExpr(expr: LetExpr) {
+        // For function bindings with simple names, declare the name first
+        // to allow recursive self-reference within the function body
+        val isRecursiveBinding = expr.value is FunctionExpr && expr.pattern is BindingPattern
+        if (isRecursiveBinding) {
+            declarePattern(expr.pattern)
+        }
+
         resolveExpr(expr.value)
-        declarePattern(expr.pattern)
+
+        if (!isRecursiveBinding) {
+            declarePattern(expr.pattern)
+        }
     }
 
     private fun resolveReturnExpr(expr: ReturnExpr) {

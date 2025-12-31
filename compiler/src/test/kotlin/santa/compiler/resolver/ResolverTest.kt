@@ -70,6 +70,32 @@ class ResolverTest {
         }
     }
 
+    @Test
+    fun allows_recursive_function_self_reference() {
+        assertDoesNotThrow {
+            resolve(
+            """
+            let factorial = |n| {
+              if n == 0 { 1 } else { n * factorial(n - 1) }
+            };
+            """.trimIndent(),
+            )
+        }
+    }
+
+    @Test
+    fun allows_recursive_function_with_multiple_self_calls() {
+        assertDoesNotThrow {
+            resolve(
+            """
+            let fib = |n| {
+              if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+            };
+            """.trimIndent(),
+            )
+        }
+    }
+
     private fun resolve(source: String) {
         val tokens = Lexer(source).lex()
         val program = Parser(tokens).parseProgram()

@@ -462,6 +462,12 @@ class LazySequenceValue private constructor(
  * @property arity The number of required arguments, or -1 for variadic functions
  */
 abstract class FunctionValue(val arity: Int = 0) : Value {
+    /**
+     * Self-reference for recursive functions.
+     * Set after construction for self-referential closures.
+     */
+    @JvmField
+    protected var selfRef: Value? = null
 
     override fun isTruthy(): Boolean = true  // Always truthy
     override fun isHashable(): Boolean = false  // Not hashable
@@ -472,6 +478,14 @@ abstract class FunctionValue(val arity: Int = 0) : Value {
 
     /** Returns true if this function accepts variable number of arguments. */
     fun isVariadic(): Boolean = arity < 0
+
+    /**
+     * Sets the self-reference for recursive functions.
+     * Called by codegen after the function is stored in its binding slot.
+     */
+    open fun setSelfRef(self: Value) {
+        this.selfRef = self
+    }
 }
 
 /**
