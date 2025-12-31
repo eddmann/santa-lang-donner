@@ -310,7 +310,7 @@ Release Gate 16
 - [x] Collection slicing with ranges (`xs[1..3]`, `s[0..5]`)
 - [x] Placeholder expressions (`_ + 1` → `|x| x + 1`)
 - [x] Destructuring in lambda parameters (`|[a, b]| a + b`)
-- [ ] Dict shorthand codegen (`#{items, op}` where `items`/`op` are identifiers)
+- [x] Dict shorthand codegen (`#{items, op}` where `items`/`op` are identifiers)
 - [ ] AOC URL read support (`read("aoc://2022/1")` → fetch/cache puzzle input)
 - [ ] Memoize with recursive self-reference (`let fib = memoize |n| ... fib(n-1) ...`)
 - [ ] AOC 2022 solutions pass (26 days)

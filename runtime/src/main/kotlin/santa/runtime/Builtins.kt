@@ -1672,8 +1672,7 @@ object Builtins {
                 }
                 pathStr.startsWith("aoc://") -> {
                     // AOC URLs: aoc://year/day -> fetch from adventofcode.com
-                    // For now, return nil - CLI will provide actual implementation
-                    NilValue
+                    readAocInput(pathStr)
                 }
                 else -> {
                     // Local file path
@@ -1715,6 +1714,83 @@ object Builtins {
         is FunctionValue -> "<function>"
         is LazySequenceValue -> "<lazy-sequence>"
         is RangeValue -> "<range>"
+    }
+
+    /**
+     * Read AOC puzzle input from aoc://year/day URL.
+     *
+     * 1. Check cache at ~/.cache/santa-lang/aoc/{year}/day{day}.txt
+     * 2. If not cached, get session from AOC_SESSION env var or ~/.aoc_session file
+     * 3. Fetch from https://adventofcode.com/{year}/day/{day}/input
+     * 4. Cache and return the input
+     */
+    private fun readAocInput(url: String): Value {
+        // Parse aoc://year/day format
+        val parts = url.removePrefix("aoc://").split("/")
+        if (parts.size != 2) {
+            return NilValue
+        }
+        val year = parts[0].toIntOrNull() ?: return NilValue
+        val day = parts[1].toIntOrNull() ?: return NilValue
+
+        // Check cache first
+        val cacheDir = java.io.File(System.getProperty("user.home"), ".cache/santa-lang/aoc/$year")
+        val cacheFile = java.io.File(cacheDir, "day$day.txt")
+        if (cacheFile.exists()) {
+            return StringValue(cacheFile.readText())
+        }
+
+        // Get session token
+        val session = getAocSession() ?: return NilValue
+
+        // Fetch from AOC
+        return try {
+            val connection = java.net.URI("https://adventofcode.com/$year/day/$day/input")
+                .toURL()
+                .openConnection() as java.net.HttpURLConnection
+            connection.setRequestProperty("Cookie", "session=$session")
+            connection.setRequestProperty("User-Agent", "santa-lang-donner/1.0")
+
+            if (connection.responseCode == 200) {
+                val content = connection.inputStream.bufferedReader().readText()
+                // Cache for future use
+                cacheDir.mkdirs()
+                cacheFile.writeText(content)
+                StringValue(content)
+            } else {
+                NilValue
+            }
+        } catch (_: Exception) {
+            NilValue
+        }
+    }
+
+    /**
+     * Get AOC session token from environment or ~/.aoc_session file.
+     */
+    private fun getAocSession(): String? {
+        // Check environment variable first
+        System.getenv("AOC_SESSION")?.takeIf { it.isNotBlank() }?.let { return it }
+
+        // Check ~/.aoc_session file
+        val sessionFile = java.io.File(System.getProperty("user.home"), ".aoc_session")
+        if (sessionFile.exists()) {
+            val content = sessionFile.readText().trim()
+            if (content.isNotBlank()) {
+                return content
+            }
+        }
+
+        // Check ~/.adventofcode.session file (alternative location)
+        val altSessionFile = java.io.File(System.getProperty("user.home"), ".adventofcode.session")
+        if (altSessionFile.exists()) {
+            val content = altSessionFile.readText().trim()
+            if (content.isNotBlank()) {
+                return content
+            }
+        }
+
+        return null
     }
 
     /**

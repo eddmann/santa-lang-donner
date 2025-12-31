@@ -1732,4 +1732,40 @@ class CodegenTest {
             result.get(StringValue("f")).typeName() shouldBe "Function"
         }
     }
+
+    @Nested
+    inner class AocUrlRead {
+        @Test
+        fun `aoc url with invalid format returns nil`() {
+            eval("read(\"aoc://\")") shouldBe NilValue
+            eval("read(\"aoc://2022\")") shouldBe NilValue
+            eval("read(\"aoc://2022/1/extra\")") shouldBe NilValue
+            eval("read(\"aoc://abc/1\")") shouldBe NilValue
+            eval("read(\"aoc://2022/abc\")") shouldBe NilValue
+        }
+
+        @Test
+        fun `aoc url reads from cache when available`() {
+            // Create a temporary cache file
+            val cacheDir = java.io.File(System.getProperty("user.home"), ".cache/santa-lang/aoc/9999")
+            val cacheFile = java.io.File(cacheDir, "day99.txt")
+            try {
+                cacheDir.mkdirs()
+                cacheFile.writeText("cached input\n")
+
+                val result = eval("read(\"aoc://9999/99\")") as StringValue
+                result.value shouldBe "cached input\n"
+            } finally {
+                cacheFile.delete()
+                cacheDir.delete()
+            }
+        }
+
+        @Test
+        fun `aoc url without session and no cache returns nil`() {
+            // Use a year/day that definitely won't be cached
+            val result = eval("read(\"aoc://1900/99\")")
+            result shouldBe NilValue
+        }
+    }
 }
