@@ -297,6 +297,46 @@ Release Gate 15
 
 ---
 
+## Phase 16: AOC Compatibility
+
+Goal: Run real Advent of Code solutions from `~/Projects/advent-of-code`.
+
+See `AOC_COMPATIBILITY.md` for detailed analysis.
+
+LANG.txt: Sections 2.4, 6.4, 8.3, 9, 10, 13
+
+Release Gate 16
+- [ ] Multiline string literals (allow `\n` in strings, or add raw string syntax)
+- [ ] Collection slicing with ranges (`xs[1..3]`, `s[0..5]`)
+- [ ] Placeholder expressions (`_ + 1` → `|x| x + 1`)
+- [ ] Destructuring in lambda parameters (`|[a, b]| a + b`)
+- [ ] Dict shorthand codegen (`#{items, op}` where `items`/`op` are identifiers)
+- [ ] AOC URL read support (`read("aoc://2022/1")` → fetch/cache puzzle input)
+- [ ] Memoize with recursive self-reference (`let fib = memoize |n| ... fib(n-1) ...`)
+- [ ] AOC 2022 solutions pass (26 days)
+- [ ] AOC 2023 solutions pass (14 days)
+- [ ] AOC 2025 solutions pass (7 days)
+
+### Implementation Notes
+
+**Multiline strings** (`Lexer.kt:118`):
+- Remove the `if (c == '\n') throw` check
+- Track line numbers correctly within string
+
+**Collection slicing** (`Operators.kt:216`):
+- Handle `RangeValue` as index in `index()` function
+- Call `ListValue.slice()` / add `StringValue.slice()`
+
+**Placeholders** (`CodeGenerator.kt:378`):
+- Convert `PlaceholderExpr` in binary ops to lambda wrapper
+- Track placeholder positions for multi-placeholder expressions
+
+**Lambda destructuring** (`Parser.kt:323`):
+- Parse pattern instead of just identifier after `|`
+- Generate destructuring code in lambda body
+
+---
+
 ## Notes on JVM Bytecode Strategy
 
 - Use ASM with Java 21 bytecode level.

@@ -39,6 +39,20 @@ fi
 PROMPT=$(cat <<'PROMPT'
 Continue developing Donner, a direct JVM bytecode compiler for santa-lang.
 
+## CURRENT PRIORITY: Phase 16 - AOC Compatibility
+
+The goal is to run real Advent of Code solutions from `~/Projects/advent-of-code`.
+See `AOC_COMPATIBILITY.md` for detailed analysis of missing features.
+
+**Missing features (in priority order):**
+1. Multiline string literals (`Lexer.kt:118` - remove newline rejection)
+2. Collection slicing (`Operators.kt:216` - handle RangeValue as index)
+3. Placeholder expressions (`CodeGenerator.kt:378` - implement TODO)
+4. Lambda param destructuring (`Parser.kt:323` - parse patterns not just idents)
+5. Dict shorthand codegen (`CodeGenerator.kt:1303` - implement TODO)
+6. AOC URL read (`Builtins.kt:1676` - fetch/cache puzzle input)
+7. Memoize self-reference (resolver needs to see binding in RHS)
+
 ## ARCHITECTURE (MANDATORY)
 This is a direct JVM bytecode compiler using ASM. No interpreter. No custom VM.
 - Lexer -> Parser -> Desugar -> Resolver -> Bytecode Gen -> .class -> JVM
@@ -72,7 +86,7 @@ This is a direct JVM bytecode compiler using ASM. No interpreter. No custom VM.
 7. Commit using Conventional Commits and record the phase/gate in the commit scope (type(phase-X-gate-Y): ...)
 8. Use `git log` to confirm the last completed phase/gate for continuity
 
-Begin by reading PLAN.md and identify the next incomplete release gate.
+Begin by reading PLAN.md and AOC_COMPATIBILITY.md to understand Phase 16 requirements.
 PROMPT
 )
 
