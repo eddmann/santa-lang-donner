@@ -315,12 +315,14 @@ class RangeValue private constructor(
 
     companion object {
         /** Create exclusive range: start..end */
+        @JvmStatic
         fun exclusive(start: Long, end: Long): RangeValue {
             val step = if (start <= end) 1L else -1L
             return RangeValue(start, end, step)
         }
 
         /** Create inclusive range: start..=end */
+        @JvmStatic
         fun inclusive(start: Long, end: Long): RangeValue {
             val step = if (start <= end) 1L else -1L
             val endExclusive = if (step > 0) end + 1 else end - 1
@@ -328,6 +330,7 @@ class RangeValue private constructor(
         }
 
         /** Create unbounded range: start.. */
+        @JvmStatic
         fun unbounded(start: Long): RangeValue {
             return RangeValue(start, null, 1L)
         }
@@ -499,3 +502,25 @@ class ComposedFunctionValue(
         return second.invoke(listOf(intermediate))
     }
 }
+
+/**
+ * Control flow exception for early return from functions (LANG.txt §7.3).
+ *
+ * This exception is thrown by compiled `return` statements and caught at
+ * function boundaries to implement non-local returns.
+ *
+ * Using an exception provides clean stack unwinding through nested blocks.
+ * It extends Throwable directly (not Exception) and has no stack trace
+ * for performance since it's used for normal control flow.
+ */
+class ReturnException(@JvmField val value: Value) : Throwable(null, null, false, false)
+
+/**
+ * Control flow exception for early break from iteration (LANG.txt §7.4).
+ *
+ * This exception is thrown by compiled `break` statements and caught by
+ * iteration builtins (reduce, fold, fold_s, scan, each) to implement early exit.
+ *
+ * The break value becomes the result of the enclosing iteration expression.
+ */
+class BreakException(@JvmField val value: Value) : Throwable(null, null, false, false)

@@ -901,6 +901,7 @@ object Builtins {
     /**
      * reduce(reducer, collection) - Reduce using first element as initial accumulator.
      * Throws RuntimeErr if collection is empty.
+     * Supports early exit via break.
      */
     @JvmStatic
     fun reduce(reducer: Value, collection: Value): Value {
@@ -911,13 +912,20 @@ object Builtins {
         if (items.isEmpty()) {
             throw SantaRuntimeException("reduce: cannot reduce empty collection")
         }
-        return items.drop(1).fold(items.first()) { acc, elem ->
-            reducer.invoke(listOf(acc, elem))
+        var acc = items.first()
+        try {
+            for (elem in items.drop(1)) {
+                acc = reducer.invoke(listOf(acc, elem))
+            }
+            return acc
+        } catch (e: BreakException) {
+            return e.value
         }
     }
 
     /**
      * fold(initial, folder, collection) - Fold with explicit initial value.
+     * Supports early exit via break.
      */
     @JvmStatic
     fun fold(initial: Value, folder: Value, collection: Value): Value {
@@ -929,12 +937,18 @@ object Builtins {
             is SetValue -> collection.elements.asSequence()
             is DictValue -> {
                 // Folder receives acc, value (and optionally key)
-                return collection.entries.entries.fold(initial) { acc, (k, v) ->
-                    if (folder.arity >= 3) {
-                        folder.invoke(listOf(acc, v, k))
-                    } else {
-                        folder.invoke(listOf(acc, v))
+                var acc = initial
+                try {
+                    for ((k, v) in collection.entries) {
+                        acc = if (folder.arity >= 3) {
+                            folder.invoke(listOf(acc, v, k))
+                        } else {
+                            folder.invoke(listOf(acc, v))
+                        }
                     }
+                    return acc
+                } catch (e: BreakException) {
+                    return e.value
                 }
             }
             is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
@@ -942,8 +956,14 @@ object Builtins {
             is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
             else -> throw SantaRuntimeException("fold: expected collection, got ${collection.typeName()}")
         }
-        return items.fold(initial) { acc, elem ->
-            folder.invoke(listOf(acc, elem))
+        var acc = initial
+        try {
+            for (elem in items) {
+                acc = folder.invoke(listOf(acc, elem))
+            }
+            return acc
+        } catch (e: BreakException) {
+            return e.value
         }
     }
 
@@ -951,6 +971,7 @@ object Builtins {
      * fold_s(initial, folder, collection) - Fold with state.
      * Initial is a list where first element is the result and remaining elements are state.
      * Only the first element is returned at the end.
+     * Supports early exit via break.
      */
     @JvmStatic
     fun fold_s(initial: Value, folder: Value, collection: Value): Value {
@@ -970,22 +991,27 @@ object Builtins {
             else -> throw SantaRuntimeException("fold_s: expected collection, got ${collection.typeName()}")
         }
         var state: Value = initial
-        for (elem in items) {
-            state = folder.invoke(listOf(state, elem))
-            if (state !is ListValue) {
-                throw SantaRuntimeException("fold_s: folder must return a List")
+        try {
+            for (elem in items) {
+                state = folder.invoke(listOf(state, elem))
+                if (state !is ListValue) {
+                    throw SantaRuntimeException("fold_s: folder must return a List")
+                }
             }
-        }
-        // Return first element of final state
-        return if (state is ListValue && state.size() > 0) {
-            state.get(0)
-        } else {
-            NilValue
+            // Return first element of final state
+            return if (state is ListValue && state.size() > 0) {
+                state.get(0)
+            } else {
+                NilValue
+            }
+        } catch (e: BreakException) {
+            return e.value
         }
     }
 
     /**
      * scan(initial, folder, collection) - Return all intermediate fold results.
+     * Supports early exit via break.
      */
     @JvmStatic
     fun scan(initial: Value, folder: Value, collection: Value): Value {
@@ -999,15 +1025,19 @@ object Builtins {
                 // Folder receives acc, value (and optionally key)
                 val results = mutableListOf<Value>()
                 var acc = initial
-                for ((k, v) in collection.entries) {
-                    acc = if (folder.arity >= 3) {
-                        folder.invoke(listOf(acc, v, k))
-                    } else {
-                        folder.invoke(listOf(acc, v))
+                try {
+                    for ((k, v) in collection.entries) {
+                        acc = if (folder.arity >= 3) {
+                            folder.invoke(listOf(acc, v, k))
+                        } else {
+                            folder.invoke(listOf(acc, v))
+                        }
+                        results.add(acc)
                     }
-                    results.add(acc)
+                    return ListValue(results.toPersistentList())
+                } catch (e: BreakException) {
+                    return e.value
                 }
-                return ListValue(results.toPersistentList())
             }
             is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }
             is RangeValue -> collection.asSequence().toList()
@@ -1015,15 +1045,20 @@ object Builtins {
         }
         val results = mutableListOf<Value>()
         var acc = initial
-        for (elem in items) {
-            acc = folder.invoke(listOf(acc, elem))
-            results.add(acc)
+        try {
+            for (elem in items) {
+                acc = folder.invoke(listOf(acc, elem))
+                results.add(acc)
+            }
+            return ListValue(results.toPersistentList())
+        } catch (e: BreakException) {
+            return e.value
         }
-        return ListValue(results.toPersistentList())
     }
 
     /**
      * each(side_effect, collection) - Apply side-effecting function to each element. Returns nil.
+     * Supports early exit via break.
      */
     @JvmStatic
     fun each(sideEffect: Value, collection: Value): Value {
@@ -1035,24 +1070,32 @@ object Builtins {
             is SetValue -> collection.elements.asSequence()
             is DictValue -> {
                 // Function receives value (and optionally key)
-                for ((k, v) in collection.entries) {
-                    if (sideEffect.arity >= 2) {
-                        sideEffect.invoke(listOf(v, k))
-                    } else {
-                        sideEffect.invoke(listOf(v))
+                try {
+                    for ((k, v) in collection.entries) {
+                        if (sideEffect.arity >= 2) {
+                            sideEffect.invoke(listOf(v, k))
+                        } else {
+                            sideEffect.invoke(listOf(v))
+                        }
                     }
+                    return NilValue
+                } catch (e: BreakException) {
+                    return e.value
                 }
-                return NilValue
             }
             is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
             is RangeValue -> collection.asSequence()
             is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
             else -> throw SantaRuntimeException("each: expected collection, got ${collection.typeName()}")
         }
-        for (elem in items) {
-            sideEffect.invoke(listOf(elem))
+        try {
+            for (elem in items) {
+                sideEffect.invoke(listOf(elem))
+            }
+            return NilValue
+        } catch (e: BreakException) {
+            return e.value
         }
-        return NilValue
     }
 
     // =========================================================================

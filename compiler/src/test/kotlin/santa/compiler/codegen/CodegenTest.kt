@@ -1103,6 +1103,165 @@ class CodegenTest {
         fun `function is truthy`() {
             eval("let f = || 1; if f { \"yes\" } else { \"no\" }") shouldBe StringValue("yes")
         }
+
+        @Test
+        fun `return from simple function`() {
+            eval("let f = |x| { return x * 2 }; f(5)") shouldBe IntValue(10)
+        }
+
+        @Test
+        fun `early return from function`() {
+            eval("""
+                let f = |x| {
+                    if x < 0 { return "negative" }
+                    if x == 0 { return "zero" }
+                    "positive"
+                };
+                f(-5)
+            """.trimIndent()) shouldBe StringValue("negative")
+        }
+
+        @Test
+        fun `early return from function - middle case`() {
+            eval("""
+                let f = |x| {
+                    if x < 0 { return "negative" }
+                    if x == 0 { return "zero" }
+                    "positive"
+                };
+                f(0)
+            """.trimIndent()) shouldBe StringValue("zero")
+        }
+
+        @Test
+        fun `early return from function - no early return`() {
+            eval("""
+                let f = |x| {
+                    if x < 0 { return "negative" }
+                    if x == 0 { return "zero" }
+                    "positive"
+                };
+                f(10)
+            """.trimIndent()) shouldBe StringValue("positive")
+        }
+
+        @Test
+        fun `return from nested blocks`() {
+            eval("""
+                let f = || {
+                    let x = 1;
+                    {
+                        let y = 2;
+                        return x + y
+                    }
+                    999
+                };
+                f()
+            """.trimIndent()) shouldBe IntValue(3)
+        }
+    }
+
+    @Nested
+    inner class RangeExpressions {
+        @Test
+        fun `exclusive range creates range value`() {
+            eval("type(1..5)") shouldBe StringValue("Range")
+        }
+
+        @Test
+        fun `inclusive range creates range value`() {
+            eval("type(1..=5)") shouldBe StringValue("Range")
+        }
+
+        @Test
+        fun `unbounded range creates range value`() {
+            eval("type(1..)") shouldBe StringValue("Range")
+        }
+
+        @Test
+        fun `exclusive range with list conversion`() {
+            val result = eval("list(1..5)") as ListValue
+            result.size() shouldBe 4
+            result.get(0) shouldBe IntValue(1)
+            result.get(1) shouldBe IntValue(2)
+            result.get(2) shouldBe IntValue(3)
+            result.get(3) shouldBe IntValue(4)
+        }
+
+        @Test
+        fun `inclusive range with list conversion`() {
+            val result = eval("list(1..=5)") as ListValue
+            result.size() shouldBe 5
+            result.get(0) shouldBe IntValue(1)
+            result.get(4) shouldBe IntValue(5)
+        }
+
+        @Test
+        fun `range with map and take`() {
+            // map on a range returns a lazy sequence, so we need take() before list()
+            val result = eval("1..5 |> map(|x| x * 2) |> take(4) |> list") as ListValue
+            result.size() shouldBe 4
+            result.get(0) shouldBe IntValue(2)
+            result.get(1) shouldBe IntValue(4)
+            result.get(2) shouldBe IntValue(6)
+            result.get(3) shouldBe IntValue(8)
+        }
+
+        @Test
+        fun `range sum`() {
+            eval("1..=10 |> sum") shouldBe IntValue(55)
+        }
+
+        @Test
+        fun `unbounded range with take`() {
+            val result = eval("1.. |> take(5) |> list") as ListValue
+            result.size() shouldBe 5
+            result.get(0) shouldBe IntValue(1)
+            result.get(4) shouldBe IntValue(5)
+        }
+    }
+
+    @Nested
+    inner class BreakFromIteration {
+        @Test
+        fun `break from reduce`() {
+            // Sum until we hit a number greater than 5
+            eval("""
+                reduce(|acc, n| {
+                    if n > 5 { break acc }
+                    acc + n
+                }, [1, 2, 3, 10, 4])
+            """.trimIndent()) shouldBe IntValue(6) // 1 + 2 + 3 = 6
+        }
+
+        @Test
+        fun `break from fold`() {
+            eval("""
+                fold(0, |acc, n| {
+                    if n > 10 { break acc }
+                    acc + n
+                }, [1, 2, 3, 100, 5])
+            """.trimIndent()) shouldBe IntValue(6) // 0 + 1 + 2 + 3 = 6
+        }
+
+        @Test
+        fun `break from each returns break value`() {
+            eval("""
+                each(|n| {
+                    if n == 3 { break "found" }
+                }, [1, 2, 3, 4, 5])
+            """.trimIndent()) shouldBe StringValue("found")
+        }
+
+        @Test
+        fun `break returns specified value`() {
+            eval("""
+                fold(0, |acc, n| {
+                    if n == 5 { break 999 }
+                    acc + n
+                }, [1, 2, 3, 4, 5])
+            """.trimIndent()) shouldBe IntValue(999)
+        }
     }
 
     @Nested

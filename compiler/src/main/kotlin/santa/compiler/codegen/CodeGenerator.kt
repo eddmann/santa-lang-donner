@@ -212,9 +212,24 @@ private class ClassGenerator(private val className: String) {
         // 2. Parameters (extracted from args list)
         val exprGen = LambdaExpressionGenerator(mv, lambdaClassName, params, captures, this::generateLambdaClass)
 
+        // Wrap body in try-catch for ReturnException to support early return
+        val tryStart = Label()
+        val tryEnd = Label()
+        val catchHandler = Label()
+
+        mv.visitTryCatchBlock(tryStart, tryEnd, catchHandler, RETURN_EXCEPTION_TYPE)
+
+        mv.visitLabel(tryStart)
         // Compile the body
         exprGen.compileExpr(body)
+        mv.visitLabel(tryEnd)
+        // Normal exit - return the body's value
+        mv.visitInsn(ARETURN)
 
+        // Catch ReturnException and extract its value, then return it
+        mv.visitLabel(catchHandler)
+        // Stack has ReturnException, get its value field
+        mv.visitFieldInsn(GETFIELD, RETURN_EXCEPTION_TYPE, "value", "L${VALUE_TYPE};")
         mv.visitInsn(ARETURN)
         mv.visitMaxs(-1, -1)
         mv.visitEnd()
@@ -223,6 +238,8 @@ private class ClassGenerator(private val className: String) {
     companion object {
         const val VALUE_TYPE = "santa/runtime/value/Value"
         const val FUNCTION_VALUE_TYPE = "santa/runtime/value/FunctionValue"
+        const val RETURN_EXCEPTION_TYPE = "santa/runtime/value/ReturnException"
+        const val BREAK_EXCEPTION_TYPE = "santa/runtime/value/BreakException"
         val SECTION_NAMES = setOf("input", "part_one", "part_two")
     }
 }
@@ -280,8 +297,8 @@ private open class ExpressionGenerator(
         when (statement) {
             is ExprStatement -> compileExpr(statement.expr)
             is LetExpr -> compileLetStatement(statement)
-            is ReturnExpr -> TODO("Return statements not yet implemented")
-            is BreakExpr -> TODO("Break statements not yet implemented")
+            is ReturnExpr -> compileReturnExpr(statement)
+            is BreakExpr -> compileBreakExpr(statement)
         }
     }
 
@@ -301,9 +318,9 @@ private open class ExpressionGenerator(
             is DictLiteralExpr -> compileDictLiteral(expr)
             is AssignmentExpr -> compileAssignment(expr)
             is LetExpr -> compileLetExpr(expr)
-            is ReturnExpr -> TODO("Return expressions not yet implemented")
-            is BreakExpr -> TODO("Break expressions not yet implemented")
-            is RangeExpr -> TODO("Range expressions not yet implemented")
+            is ReturnExpr -> compileReturnExpr(expr)
+            is BreakExpr -> compileBreakExpr(expr)
+            is RangeExpr -> compileRangeExpr(expr)
             is InfixCallExpr -> TODO("Infix calls not yet implemented")
             is CallExpr -> compileCall(expr)
             is IndexExpr -> compileIndex(expr)
@@ -613,6 +630,107 @@ private open class ExpressionGenerator(
     private fun compileLetExpr(expr: LetExpr) {
         // Same as statement version
         compileLetStatement(expr)
+    }
+
+    private fun compileReturnExpr(expr: ReturnExpr) {
+        // Compile the return value
+        compileExpr(expr.value)
+
+        // Create new ReturnException(value) and throw it
+        mv.visitTypeInsn(NEW, RETURN_EXCEPTION_TYPE)
+        mv.visitInsn(DUP_X1)  // Stack: exception, value, exception
+        mv.visitInsn(SWAP)     // Stack: exception, exception, value
+        mv.visitMethodInsn(
+            INVOKESPECIAL,
+            RETURN_EXCEPTION_TYPE,
+            "<init>",
+            "(L${VALUE_TYPE};)V",
+            false
+        )
+        mv.visitInsn(ATHROW)
+    }
+
+    private fun compileBreakExpr(expr: BreakExpr) {
+        // Compile the break value
+        compileExpr(expr.value)
+
+        // Create new BreakException(value) and throw it
+        mv.visitTypeInsn(NEW, BREAK_EXCEPTION_TYPE)
+        mv.visitInsn(DUP_X1)  // Stack: exception, value, exception
+        mv.visitInsn(SWAP)     // Stack: exception, exception, value
+        mv.visitMethodInsn(
+            INVOKESPECIAL,
+            BREAK_EXCEPTION_TYPE,
+            "<init>",
+            "(L${VALUE_TYPE};)V",
+            false
+        )
+        mv.visitInsn(ATHROW)
+    }
+
+    private fun compileRangeExpr(expr: RangeExpr) {
+        // Compile start expression - must be integer
+        compileExpr(expr.start)
+        // Extract the long value from IntValue
+        mv.visitTypeInsn(CHECKCAST, INT_VALUE_TYPE)
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL,
+            INT_VALUE_TYPE,
+            "getValue",
+            "()J",
+            false
+        )
+
+        when {
+            expr.end == null -> {
+                // Unbounded range: start..
+                mv.visitMethodInsn(
+                    INVOKESTATIC,
+                    RANGE_VALUE_TYPE,
+                    "unbounded",
+                    "(J)L${RANGE_VALUE_TYPE};",
+                    false
+                )
+            }
+            expr.isInclusive -> {
+                // Inclusive range: start..=end
+                compileExpr(expr.end)
+                mv.visitTypeInsn(CHECKCAST, INT_VALUE_TYPE)
+                mv.visitMethodInsn(
+                    INVOKEVIRTUAL,
+                    INT_VALUE_TYPE,
+                    "getValue",
+                    "()J",
+                    false
+                )
+                mv.visitMethodInsn(
+                    INVOKESTATIC,
+                    RANGE_VALUE_TYPE,
+                    "inclusive",
+                    "(JJ)L${RANGE_VALUE_TYPE};",
+                    false
+                )
+            }
+            else -> {
+                // Exclusive range: start..end
+                compileExpr(expr.end)
+                mv.visitTypeInsn(CHECKCAST, INT_VALUE_TYPE)
+                mv.visitMethodInsn(
+                    INVOKEVIRTUAL,
+                    INT_VALUE_TYPE,
+                    "getValue",
+                    "()J",
+                    false
+                )
+                mv.visitMethodInsn(
+                    INVOKESTATIC,
+                    RANGE_VALUE_TYPE,
+                    "exclusive",
+                    "(JJ)L${RANGE_VALUE_TYPE};",
+                    false
+                )
+            }
+        }
     }
 
     private fun compileBlock(expr: BlockExpr) {
@@ -1408,7 +1526,10 @@ private open class ExpressionGenerator(
         const val LIST_VALUE_TYPE = "santa/runtime/value/ListValue"
         const val SET_VALUE_TYPE = "santa/runtime/value/SetValue"
         const val DICT_VALUE_TYPE = "santa/runtime/value/DictValue"
+        const val RANGE_VALUE_TYPE = "santa/runtime/value/RangeValue"
         const val FUNCTION_VALUE_TYPE = "santa/runtime/value/FunctionValue"
+        const val RETURN_EXCEPTION_TYPE = "santa/runtime/value/ReturnException"
+        const val BREAK_EXCEPTION_TYPE = "santa/runtime/value/BreakException"
         const val OPERATORS_TYPE = "santa/runtime/Operators"
         const val BUILTINS_TYPE = "santa/runtime/Builtins"
 

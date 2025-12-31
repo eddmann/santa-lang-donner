@@ -603,6 +603,8 @@ class Parser(private val tokens: List<Token>) {
         TokenType.SEMICOLON,
         TokenType.NEWLINE,
         TokenType.EOF,
+        TokenType.PIPE_GREATER,  // For unbounded ranges in pipelines: 1.. |> take(5)
+        TokenType.SHIFT_RIGHT,   // For composition: 1.. >> take(5)
         -> true
         else -> false
     }

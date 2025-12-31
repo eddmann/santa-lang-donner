@@ -277,9 +277,10 @@ Release Gate 14
 - [x] Builtins as first-class function values
 - [x] Example program tests (AOC style, word frequency, pipelines)
 - [x] Full test suite green
+- [x] Return statements (exception-based early return from functions)
+- [x] Break statements (exception-based early exit from iterations)
+- [x] Range expressions (exclusive, inclusive, unbounded)
 - [ ] Recursive function self-reference (deferred)
-- [ ] Range expressions (deferred)
-- [ ] Return/break statements (deferred)
 
 ---
 
