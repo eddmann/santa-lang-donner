@@ -1,6 +1,8 @@
 package santa.cli
 
 import santa.compiler.codegen.Compiler
+import santa.compiler.parser.Section
+import santa.compiler.parser.TestBlockExpr
 import santa.runtime.value.*
 import java.io.File
 import kotlin.system.exitProcess
@@ -31,23 +33,112 @@ fun main(args: Array<String>) {
 
     try {
         val source = file.readText()
-        val compiled = Compiler.compile(source)
-        val result = compiled.execute()
 
-        // Print result if in script mode (no sections)
-        if (!source.contains("part_one:") && !source.contains("part_two:")) {
-            // Script mode: print the result
-            println(formatValue(result))
+        if (runTests) {
+            runTestMode(source, includeSlow)
         } else {
-            // AOC mode: result is the last part evaluated
-            println("Result: ${formatValue(result)}")
+            runNormalMode(source)
         }
-
-        exitProcess(0)
     } catch (e: Exception) {
         System.err.println("Error: ${e.message}")
         exitProcess(1)
     }
+}
+
+private fun runTestMode(source: String, includeSlow: Boolean) {
+    val compileResult = Compiler.compileWithAst(source)
+    val program = compileResult.program
+
+    // Check if there are any test blocks
+    val testSections = program.items.filterIsInstance<Section>()
+        .filter { it.name == "test" && it.expr is TestBlockExpr }
+        .filter { includeSlow || !it.isSlow }
+
+    if (testSections.isEmpty()) {
+        val totalTestBlocks = program.items.filterIsInstance<Section>()
+            .count { it.name == "test" && it.expr is TestBlockExpr }
+        if (totalTestBlocks > 0 && !includeSlow) {
+            println("No tests to run (${totalTestBlocks} slow test(s) skipped, use -s to include)")
+        } else {
+            println("No test blocks found")
+        }
+        exitProcess(0)
+    }
+
+    val runner = TestRunner(program, includeSlow)
+    val results = runner.runTests()
+
+    var allPassed = true
+    var passCount = 0
+    var failCount = 0
+
+    for (result in results) {
+        val prefix = "Test ${result.testIndex}"
+
+        if (result.error != null) {
+            println("$prefix: ERROR - ${result.error}")
+            allPassed = false
+            failCount++
+            continue
+        }
+
+        val partOneStatus = when (result.partOnePassed) {
+            true -> { passCount++; "PASS" }
+            false -> { failCount++; allPassed = false; "FAIL" }
+            null -> null
+        }
+
+        val partTwoStatus = when (result.partTwoPassed) {
+            true -> { passCount++; "PASS" }
+            false -> { failCount++; allPassed = false; "FAIL" }
+            null -> null
+        }
+
+        val parts = buildList {
+            if (partOneStatus != null) {
+                add("part_one: $partOneStatus")
+                if (result.partOnePassed == false) {
+                    add("  expected: ${formatValue(result.partOneExpected!!)}")
+                    add("  actual:   ${formatValue(result.partOneActual!!)}")
+                }
+            }
+            if (partTwoStatus != null) {
+                add("part_two: $partTwoStatus")
+                if (result.partTwoPassed == false) {
+                    add("  expected: ${formatValue(result.partTwoExpected!!)}")
+                    add("  actual:   ${formatValue(result.partTwoActual!!)}")
+                }
+            }
+        }
+
+        if (parts.isEmpty()) {
+            println("$prefix: (no expectations)")
+        } else {
+            println("$prefix:")
+            parts.forEach { println("  $it") }
+        }
+    }
+
+    println()
+    println("Results: $passCount passed, $failCount failed")
+
+    exitProcess(if (allPassed) 0 else 1)
+}
+
+private fun runNormalMode(source: String) {
+    val compiled = Compiler.compile(source)
+    val result = compiled.execute()
+
+    // Print result if in script mode (no sections)
+    if (!source.contains("part_one:") && !source.contains("part_two:")) {
+        // Script mode: print the result
+        println(formatValue(result))
+    } else {
+        // AOC mode: result is the last part evaluated
+        println("Result: ${formatValue(result)}")
+    }
+
+    exitProcess(0)
 }
 
 private fun printUsage() {

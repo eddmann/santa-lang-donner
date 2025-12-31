@@ -56,6 +56,7 @@ enum class TokenType {
     // Other
     UNDERSCORE,
     DICT_START,
+    AT,
     NEWLINE,
     COMMENT,
     EOF,

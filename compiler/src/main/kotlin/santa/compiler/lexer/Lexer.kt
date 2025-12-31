@@ -33,6 +33,7 @@ class Lexer(source: String) {
                 isIdentifierStart(c) -> emit(tokens, identifierOrKeywordToken(), includeComments)
                 c == '_' -> emit(tokens, singleCharToken(TokenType.UNDERSCORE), includeComments)
                 c == '#' -> emit(tokens, dictStartToken(), includeComments)
+                c == '@' -> emit(tokens, singleCharToken(TokenType.AT), includeComments)
                 c == '.' -> emit(tokens, rangeToken(), includeComments)
                 else -> emit(tokens, operatorOrDelimiterToken(), includeComments)
             }

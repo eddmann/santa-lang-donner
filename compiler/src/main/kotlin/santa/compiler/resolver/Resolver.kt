@@ -73,7 +73,21 @@ class Resolver(
             is BlockExpr -> resolveBlockExpr(expr)
             is IfExpr -> resolveIfExpr(expr)
             is MatchExpr -> resolveMatchExpr(expr)
+            is TestBlockExpr -> resolveTestBlockExpr(expr)
         }
+    }
+
+    private fun resolveTestBlockExpr(expr: TestBlockExpr) {
+        // Test block entries are resolved in their own scope where `input` is defined
+        pushScope()
+        // Pre-declare test-specific section names
+        declareName("input")
+        declareName("part_one")
+        declareName("part_two")
+        expr.entries.forEach { entry ->
+            resolveExpr(entry.expr)
+        }
+        popScope()
     }
 
     private fun resolveIdentifier(expr: IdentifierExpr) {

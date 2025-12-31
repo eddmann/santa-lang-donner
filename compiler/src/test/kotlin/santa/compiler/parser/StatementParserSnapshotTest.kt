@@ -34,6 +34,36 @@ class StatementParserSnapshotTest {
             if true { }
             let dict = #{a, b: 2};
             """.trimIndent(),
+            // Test block parsing
+            """
+            test: {
+              input: "hello"
+              part_one: 10
+              part_two: 20
+            }
+            """.trimIndent(),
+            // Test block with @slow attribute
+            """
+            @slow
+            test: {
+              input: 42
+              part_one: 100
+            }
+            """.trimIndent(),
+            // Multiple test blocks
+            """
+            input: 1
+            part_one: input + 1
+            test: {
+              input: 5
+              part_one: 6
+            }
+            @slow
+            test: {
+              input: 10
+              part_one: 11
+            }
+            """.trimIndent(),
         )
 
         val snapshot = cases.joinToString("\n\n") { source ->

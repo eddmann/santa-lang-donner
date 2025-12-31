@@ -21,8 +21,35 @@ data class Program(
 data class Section(
     val name: String,
     val expr: Expr,
+    val isSlow: Boolean = false,
     override val span: Span,
 ) : TopLevel
+
+/**
+ * An entry inside a test block: `name: expr`
+ */
+data class TestEntry(
+    val name: String,
+    val expr: Expr,
+    val span: Span,
+)
+
+/**
+ * A test block containing test-specific sections.
+ *
+ * Parsed from:
+ * ```
+ * test: {
+ *   input: "test data"
+ *   part_one: expected_value
+ *   part_two: expected_value
+ * }
+ * ```
+ */
+data class TestBlockExpr(
+    val entries: List<TestEntry>,
+    override val span: Span,
+) : Expr
 
 data class StatementItem(
     val statement: Statement,

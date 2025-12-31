@@ -26,6 +26,7 @@ object ExprRenderer {
         is BlockExpr -> renderBlock(expr)
         is IfExpr -> renderIf(expr)
         is MatchExpr -> renderMatch(expr)
+        is TestBlockExpr -> renderTestBlock(expr)
     }
 
     fun renderProgram(program: Program): String {
@@ -33,8 +34,19 @@ object ExprRenderer {
     }
 
     private fun renderTopLevel(item: TopLevel): String = when (item) {
-        is Section -> "(section ${item.name} ${render(item.expr)})"
+        is Section -> {
+            val slow = if (item.isSlow) "@slow " else ""
+            "$slow(section ${item.name} ${render(item.expr)})"
+        }
         is StatementItem -> renderStatement(item.statement)
+    }
+
+    private fun renderTestBlock(expr: TestBlockExpr): String {
+        if (expr.entries.isEmpty()) return "(test-block)"
+        val entries = expr.entries.joinToString(" ") { entry ->
+            "(${entry.name} ${render(entry.expr)})"
+        }
+        return "(test-block $entries)"
     }
 
     private fun renderStatement(statement: Statement): String = when (statement) {

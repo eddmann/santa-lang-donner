@@ -38,18 +38,87 @@ class Parser(private val tokens: List<Token>) {
 
     private fun parseTopLevel(): TopLevel {
         skipLineBreaks()
-        return if (isSectionStart()) {
-            parseSection()
+
+        // Check for @slow attribute
+        val isSlow = if (check(TokenType.AT)) {
+            advance()
+            val attrName = expect(TokenType.IDENTIFIER, "Expected attribute name after '@'")
+            if (attrName.lexeme != "slow") {
+                throw error(attrName, "Unknown attribute: @${attrName.lexeme}")
+            }
+            skipLineBreaks()
+            true
         } else {
+            false
+        }
+
+        return if (isSectionStart()) {
+            parseSection(isSlow)
+        } else {
+            if (isSlow) {
+                throw error(peek(), "@slow attribute can only be applied to test sections")
+            }
             StatementItem(parseStatement())
         }
     }
 
-    private fun parseSection(): Section {
+    private fun parseSection(isSlow: Boolean = false): Section {
         val nameToken = expect(TokenType.IDENTIFIER, "Expected section name")
         expect(TokenType.COLON, "Expected ':' after section name")
+
+        // If this is a test section with a block, parse it specially
+        val expr = if (nameToken.lexeme == "test" && check(TokenType.LBRACE)) {
+            parseTestBlockExpression()
+        } else {
+            if (isSlow) {
+                throw error(nameToken, "@slow attribute can only be applied to test sections")
+            }
+            parseExpression(0)
+        }
+
+        return Section(nameToken.lexeme, expr, isSlow, spanFrom(nameToken.span, expr.span))
+    }
+
+    /**
+     * Parses a test block containing test entries.
+     *
+     * ```
+     * {
+     *   input: "test data"
+     *   part_one: expected_value
+     *   part_two: expected_value
+     * }
+     * ```
+     */
+    private fun parseTestBlockExpression(): TestBlockExpr {
+        val startToken = expect(TokenType.LBRACE, "Expected '{' to start test block")
+        val entries = mutableListOf<TestEntry>()
+
+        skipLineBreaks()
+        while (!check(TokenType.RBRACE)) {
+            if (check(TokenType.EOF)) {
+                throw error(peek(), "Expected '}' to close test block")
+            }
+            entries.add(parseTestEntry())
+            skipLineBreaks()
+            if (match(TokenType.SEMICOLON)) {
+                skipLineBreaks()
+            }
+        }
+
+        val endToken = expect(TokenType.RBRACE, "Expected '}' to close test block")
+        return TestBlockExpr(entries, spanFrom(startToken.span, endToken.span))
+    }
+
+    /**
+     * Parses a single test entry: `name: expr`
+     */
+    private fun parseTestEntry(): TestEntry {
+        skipLineBreaks()
+        val nameToken = expect(TokenType.IDENTIFIER, "Expected test entry name")
+        expect(TokenType.COLON, "Expected ':' after test entry name")
         val expr = parseExpression(0)
-        return Section(nameToken.lexeme, expr, spanFrom(nameToken.span, expr.span))
+        return TestEntry(nameToken.lexeme, expr, spanFrom(nameToken.span, expr.span))
     }
 
     private fun parseStatement(): Statement {
@@ -655,6 +724,7 @@ class Parser(private val tokens: List<Token>) {
         is BlockExpr -> copy(span = span)
         is IfExpr -> copy(span = span)
         is MatchExpr -> copy(span = span)
+        is TestBlockExpr -> copy(span = span)
     }
 
     private companion object {

@@ -1166,5 +1166,47 @@ class CodegenTest {
                 x + y
             """.trimIndent()) shouldBe IntValue(3)
         }
+
+        @Test
+        fun `test block section evaluates to nil`() {
+            // Test blocks are not executed during normal compilation
+            eval("""
+                input: 42
+                part_one: input + 1
+                test: {
+                  input: 10
+                  part_one: 11
+                }
+            """.trimIndent()) shouldBe NilValue
+        }
+
+        @Test
+        fun `slow test block section also evaluates to nil`() {
+            eval("""
+                input: 42
+                part_one: input + 1
+                @slow
+                test: {
+                  input: 100
+                  part_one: 101
+                }
+            """.trimIndent()) shouldBe NilValue
+        }
+
+        @Test
+        fun `program with only test blocks returns nil`() {
+            eval("""
+                input: 1
+                part_one: input * 2
+                test: {
+                  input: 5
+                  part_one: 10
+                }
+                test: {
+                  input: 10
+                  part_one: 20
+                }
+            """.trimIndent()) shouldBe NilValue
+        }
     }
 }

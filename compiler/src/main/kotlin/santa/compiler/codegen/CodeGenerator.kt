@@ -311,6 +311,12 @@ private open class ExpressionGenerator(
             is BlockExpr -> compileBlock(expr)
             is IfExpr -> compileIfExpr(expr)
             is MatchExpr -> compileMatchExpr(expr)
+            is TestBlockExpr -> {
+                // Test blocks are not executed during normal compilation;
+                // they are only validated during test mode in the CLI.
+                // Just push nil as a placeholder value.
+                pushNil()
+            }
         }
     }
 
@@ -1168,6 +1174,9 @@ private open class ExpressionGenerator(
                 is SetLiteralExpr, is DictLiteralExpr, is RangeExpr, is InfixCallExpr -> { }
                 is ReturnExpr -> e.value?.let { visit(it, bound) }
                 is BreakExpr -> e.value?.let { visit(it, bound) }
+                is TestBlockExpr -> {
+                    // Test blocks don't capture variables (they're validated at CLI level)
+                }
             }
         }
 
