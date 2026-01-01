@@ -103,6 +103,10 @@ object PlaceholderDesugarer {
 
     /**
      * Replace placeholders with identifier references to lambda parameters.
+     *
+     * Important: For call arguments, only replace BARE placeholders.
+     * Expressions containing placeholders (like `_ + 1`) should be left alone
+     * to be desugared independently at the argument level.
      */
     private fun replacePlaceholders(expr: Expr, nextIndex: () -> Int): Expr = when (expr) {
         is PlaceholderExpr -> {
@@ -120,14 +124,33 @@ object PlaceholderDesugarer {
             callee = replacePlaceholders(expr.callee, nextIndex),
             arguments = expr.arguments.map { arg ->
                 when (arg) {
-                    is ExprArgument -> ExprArgument(replacePlaceholders(arg.expr, nextIndex))
-                    is SpreadArgument -> SpreadArgument(replacePlaceholders(arg.expr, nextIndex))
+                    is ExprArgument -> {
+                        // Only replace bare placeholders; expressions with placeholders
+                        // will be desugared independently in desugarNested
+                        if (arg.expr is PlaceholderExpr) {
+                            ExprArgument(replacePlaceholders(arg.expr, nextIndex))
+                        } else {
+                            arg  // Leave non-bare args alone
+                        }
+                    }
+                    is SpreadArgument -> {
+                        if (arg.expr is PlaceholderExpr) {
+                            SpreadArgument(replacePlaceholders(arg.expr, nextIndex))
+                        } else {
+                            arg
+                        }
+                    }
                 }
             }
         )
         is IndexExpr -> expr.copy(
             target = replacePlaceholders(expr.target, nextIndex),
             index = replacePlaceholders(expr.index, nextIndex)
+        )
+        // Infix calls: only replace bare placeholders in left and right operands
+        is InfixCallExpr -> expr.copy(
+            left = if (expr.left is PlaceholderExpr) replacePlaceholders(expr.left, nextIndex) else expr.left,
+            right = if (expr.right is PlaceholderExpr) replacePlaceholders(expr.right, nextIndex) else expr.right
         )
         // For other expression types, we don't expect placeholders at this level
         // but we need to handle them if they contain nested expressions
@@ -156,6 +179,12 @@ object PlaceholderDesugarer {
         // Count bare placeholders in call arguments, but not placeholders inside expressions
         is CallExpr -> countPlaceholders(expr.callee) + countPlaceholdersInCallArgs(expr.arguments)
         is IndexExpr -> countPlaceholders(expr.target) + countPlaceholders(expr.index)
+        // Infix calls: count bare placeholders in left and right operands
+        is InfixCallExpr -> {
+            val leftCount = if (expr.left is PlaceholderExpr) 1 else 0
+            val rightCount = if (expr.right is PlaceholderExpr) 1 else 0
+            leftCount + rightCount
+        }
         // Don't look inside functions, blocks, if, match - they have their own scope
         is FunctionExpr, is BlockExpr, is IfExpr, is MatchExpr -> 0
         // Literals and identifiers have no placeholders
@@ -165,7 +194,7 @@ object PlaceholderDesugarer {
     /**
      * Count only bare placeholders in call arguments (not placeholders inside expressions).
      * Bare placeholders create partial application of the call.
-     * Expressions containing placeholders create their own lambdas at the argument level.
+     * Expressions containing placeholders are desugared independently at the argument level.
      */
     private fun countPlaceholdersInCallArgs(arguments: List<CallArgument>): Int {
         return arguments.count { arg ->

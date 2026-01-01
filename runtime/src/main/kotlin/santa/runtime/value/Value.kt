@@ -171,6 +171,10 @@ data class ListValue(val elements: PersistentList<Value>) : Value {
     fun concat(other: ListValue): ListValue =
         ListValue(elements.addAll(other.elements))
 
+    /** Add all elements from a collection to this list */
+    fun addAll(values: Collection<Value>): ListValue =
+        ListValue(elements.addAll(values))
+
     /** Repeat list n times: [1, 2] * 3 -> [1, 2, 1, 2, 1, 2] */
     fun repeat(n: Int): ListValue {
         if (n <= 0) return ListValue(persistentListOf())
@@ -220,9 +224,17 @@ data class SetValue(val elements: PersistentSet<Value>) : Value {
     fun union(other: SetValue): SetValue =
         SetValue(elements.addAll(other.elements))
 
+    /** Add all elements from a collection to this set */
+    fun addAll(values: Collection<Value>): SetValue =
+        SetValue(elements.addAll(values))
+
     /** Difference of two sets: {1, 2, 3} - {2} -> {1, 3} */
     fun difference(other: SetValue): SetValue =
         SetValue(elements.removeAll(other.elements))
+
+    /** Remove all elements from a collection from this set */
+    fun removeAll(values: Collection<Value>): SetValue =
+        SetValue(elements.removeAll(values))
 
     companion object {
         @JvmStatic
@@ -358,6 +370,12 @@ class LazySequenceValue private constructor(
 
     /** Take first n elements. */
     fun take(n: Int): List<Value> = generator().take(n).toList()
+
+    /** Materialize the sequence to a list. Only safe for finite sequences! */
+    fun toList(): List<Value> = generator().toList()
+
+    /** Access the underlying sequence. */
+    fun asSequence(): Sequence<Value> = generator()
 
     companion object {
         /** Create sequence by repeatedly applying function: iterate(f, init) -> init, f(init), f(f(init)), ... */
@@ -499,6 +517,27 @@ abstract class FunctionValue(val arity: Int = 0) : Value {
  *
  * Wraps another function and caches results based on argument lists.
  */
+/**
+ * Partially applied user-defined function (LANG.txt §8.4).
+ *
+ * Wraps a function with some arguments already provided.
+ * When invoked with remaining arguments, combines them and calls the original function.
+ */
+class PartiallyAppliedLambdaValue(
+    private val original: FunctionValue,
+    private val partialArgs: List<Value>
+) : FunctionValue(original.arity - partialArgs.size) {
+
+    override fun invoke(args: List<Value>): Value {
+        val fullArgs = partialArgs + args
+        if (fullArgs.size < original.arity && original.arity >= 0) {
+            // Still not enough args - return another partial application
+            return PartiallyAppliedLambdaValue(original, fullArgs)
+        }
+        return original.invoke(fullArgs)
+    }
+}
+
 class MemoizedFunctionValue(private val wrapped: FunctionValue) : FunctionValue(wrapped.arity) {
     private val cache = mutableMapOf<List<Value>, Value>()
 

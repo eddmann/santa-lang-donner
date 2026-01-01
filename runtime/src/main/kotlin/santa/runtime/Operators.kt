@@ -56,10 +56,13 @@ object Operators {
         }
         is ListValue -> when (right) {
             is ListValue -> left.concat(right)
+            is LazySequenceValue -> left.addAll(right.toList())
             else -> throw SantaRuntimeException("Cannot add ${left.typeName()} and ${right.typeName()}")
         }
         is SetValue -> when (right) {
             is SetValue -> left.union(right)
+            is ListValue -> left.addAll(right.elements)
+            is LazySequenceValue -> left.addAll(right.toList())
             else -> throw SantaRuntimeException("Cannot add ${left.typeName()} and ${right.typeName()}")
         }
         is DictValue -> when (right) {
@@ -88,6 +91,7 @@ object Operators {
         }
         is SetValue -> when (right) {
             is SetValue -> left.difference(right)
+            is ListValue -> left.removeAll(right.elements)
             else -> throw SantaRuntimeException("Cannot subtract ${right.typeName()} from ${left.typeName()}")
         }
         else -> throw SantaRuntimeException("Cannot subtract ${right.typeName()} from ${left.typeName()}")
@@ -305,6 +309,23 @@ object Operators {
             }
             else -> throw SantaRuntimeException("Cannot spread ${spread.typeName()} into arguments")
         }
+    }
+
+    /**
+     * Invoke a function with partial application support.
+     *
+     * If fewer arguments are provided than the function expects,
+     * returns a PartiallyAppliedLambdaValue instead of throwing an error.
+     */
+    @JvmStatic
+    fun invokeFunction(func: FunctionValue, args: List<Value>): Value {
+        val expectedArity = func.arity
+        // Variadic functions (negative arity) accept any number of args
+        if (expectedArity < 0 || args.size >= expectedArity) {
+            return func.invoke(args)
+        }
+        // Partial application: fewer args than expected
+        return PartiallyAppliedLambdaValue(func, args)
     }
 
     /**

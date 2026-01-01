@@ -1051,6 +1051,9 @@ object Builtins {
         }
         val results = mutableListOf<Value>()
         var acc = initial
+        // Include initial value in output - this matches the behavior needed for
+        // AOC-style code where cycles[cycle-1] needs the value at START of cycle
+        results.add(initial)
         try {
             for (elem in items) {
                 acc = folder.invoke(listOf(acc, elem))
@@ -1422,8 +1425,8 @@ object Builtins {
         val collections = when (value) {
             is ListValue -> {
                 // Check if it's a list of collections
-                if (value.elements.isNotEmpty() && value.elements.first() is ListValue ||
-                    value.elements.isNotEmpty() && value.elements.first() is SetValue) {
+                val first = value.elements.firstOrNull()
+                if (first is ListValue || first is SetValue || first is RangeValue || first is StringValue) {
                     value.elements.toList()
                 } else {
                     listOf(value)
@@ -1655,8 +1658,9 @@ object Builtins {
 
         val seq = generateSequence(start) { prev ->
             val next = prev + s
-            if (s > 0 && next < end) next
-            else if (s < 0 && next > end) next
+            // Use inclusive end (<=) to match reference behavior for AOC compatibility
+            if (s > 0 && next <= end) next
+            else if (s < 0 && next >= end) next
             else null
         }.map { IntValue(it) as Value }
 

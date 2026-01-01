@@ -32,8 +32,42 @@ private data class CaptureInfo(
     val isSelfRef: Boolean = false,  // True if this is a self-reference for recursion
 )
 
+/**
+ * Custom ClassWriter that handles our lambda classes without loading them.
+ *
+ * When ASM computes stack frames, it needs to find common superclasses.
+ * Since our lambda classes haven't been loaded into the JVM yet,
+ * we need to tell ASM that they all extend FunctionValue.
+ */
+private class SantaClassWriter(private val scriptPrefix: String) : ClassWriter(COMPUTE_FRAMES or COMPUTE_MAXS) {
+    companion object {
+        private const val FUNCTION_VALUE = "santa/runtime/value/FunctionValue"
+    }
+
+    override fun getCommonSuperClass(type1: String, type2: String): String {
+        // If either type is one of our lambda classes, we know it extends FunctionValue
+        val isLambda1 = type1.startsWith(scriptPrefix) && type1.contains("\$Lambda")
+        val isLambda2 = type2.startsWith(scriptPrefix) && type2.contains("\$Lambda")
+
+        return when {
+            // Both are our lambdas - common superclass is FunctionValue
+            isLambda1 && isLambda2 -> FUNCTION_VALUE
+            // One is our lambda, one is FunctionValue - common is FunctionValue
+            isLambda1 && type2 == FUNCTION_VALUE -> FUNCTION_VALUE
+            isLambda2 && type1 == FUNCTION_VALUE -> FUNCTION_VALUE
+            // One is our lambda - the other must be a superclass of FunctionValue
+            isLambda1 || isLambda2 -> {
+                // FunctionValue extends Object, so Object is the common superclass
+                "java/lang/Object"
+            }
+            // Neither is our lambda - use default implementation
+            else -> super.getCommonSuperClass(type1, type2)
+        }
+    }
+}
+
 private class ClassGenerator(private val className: String) {
-    private val cw = ClassWriter(ClassWriter.COMPUTE_FRAMES or ClassWriter.COMPUTE_MAXS)
+    private val cw = SantaClassWriter(className.substringBefore('$'))
     private val lambdaClasses = mutableMapOf<String, ByteArray>()
     private var lambdaCounter = 0
 
@@ -124,7 +158,7 @@ private class ClassGenerator(private val className: String) {
         captures: List<CaptureInfo>,
     ): String {
         val lambdaClassName = "${className}\$Lambda${++lambdaCounter}"
-        val lcw = ClassWriter(ClassWriter.COMPUTE_FRAMES or ClassWriter.COMPUTE_MAXS)
+        val lcw = SantaClassWriter(className)
 
         lcw.visit(
             V21,
@@ -647,6 +681,13 @@ private open class ExpressionGenerator(
     }
 
     private fun compileIdentifier(expr: IdentifierExpr) {
+        // Check local bindings first - allows shadowing of builtins
+        val binding = lookupBinding(expr.name)
+        if (binding != null) {
+            mv.visitVarInsn(ALOAD, binding.slot)
+            return
+        }
+
         // Check if it's a builtin function reference (for pipeline/compose)
         if (expr.name in BUILTIN_FUNCTIONS) {
             // Load a BuiltinFunctionValue wrapper for this builtin
@@ -661,9 +702,7 @@ private open class ExpressionGenerator(
             return
         }
 
-        val binding = lookupBinding(expr.name)
-            ?: throw CodegenException("Undefined variable: ${expr.name}")
-        mv.visitVarInsn(ALOAD, binding.slot)
+        throw CodegenException("Undefined variable: ${expr.name}")
     }
 
     private fun compileAssignment(expr: AssignmentExpr) {
@@ -1732,15 +1771,16 @@ private open class ExpressionGenerator(
                 )
             }
 
-            // Cast callee to FunctionValue and invoke
+            // Cast callee to FunctionValue and invoke through Operators.invokeFunction
+            // for partial application support
             mv.visitInsn(SWAP) // Move args list below callee
             mv.visitTypeInsn(CHECKCAST, FUNCTION_VALUE_TYPE)
             mv.visitInsn(SWAP) // Move callee below args list again
             mv.visitMethodInsn(
-                INVOKEVIRTUAL,
-                FUNCTION_VALUE_TYPE,
-                "invoke",
-                "(Ljava/util/List;)L${VALUE_TYPE};",
+                INVOKESTATIC,
+                OPERATORS_TYPE,
+                "invokeFunction",
+                "(L${FUNCTION_VALUE_TYPE};Ljava/util/List;)L${VALUE_TYPE};",
                 false
             )
         }
@@ -1779,15 +1819,16 @@ private open class ExpressionGenerator(
                 false
             )
 
-            // Cast callee to FunctionValue and invoke
+            // Cast callee to FunctionValue and invoke through Operators.invokeFunction
+            // for partial application support
             mv.visitInsn(SWAP)
             mv.visitTypeInsn(CHECKCAST, FUNCTION_VALUE_TYPE)
             mv.visitInsn(SWAP)
             mv.visitMethodInsn(
-                INVOKEVIRTUAL,
-                FUNCTION_VALUE_TYPE,
-                "invoke",
-                "(Ljava/util/List;)L${VALUE_TYPE};",
+                INVOKESTATIC,
+                OPERATORS_TYPE,
+                "invokeFunction",
+                "(L${FUNCTION_VALUE_TYPE};Ljava/util/List;)L${VALUE_TYPE};",
                 false
             )
         }
@@ -2209,17 +2250,24 @@ private open class LambdaExpressionGenerator(
         // Without this, nested lambdas can't find captured variables via lookupBinding.
         for (capture in captures) {
             if (capture.isSelfRef) {
-                // Self-references are handled via the base class selfRef field
-                continue
+                // Self-references are loaded from base class selfRef field
+                mv.visitVarInsn(ALOAD, 0) // this
+                mv.visitFieldInsn(
+                    GETFIELD,
+                    FUNCTION_VALUE_TYPE,
+                    "selfRef",
+                    "L${VALUE_TYPE};"
+                )
+            } else {
+                // Load from this.fieldName
+                mv.visitVarInsn(ALOAD, 0) // this
+                mv.visitFieldInsn(
+                    GETFIELD,
+                    lambdaClassName,
+                    capture.name,
+                    "L${VALUE_TYPE};"
+                )
             }
-            // Load from this.fieldName
-            mv.visitVarInsn(ALOAD, 0) // this
-            mv.visitFieldInsn(
-                GETFIELD,
-                lambdaClassName,
-                capture.name,
-                "L${VALUE_TYPE};"
-            )
             // Store in local slot
             val slot = nextSlot++
             mv.visitVarInsn(ASTORE, slot)
