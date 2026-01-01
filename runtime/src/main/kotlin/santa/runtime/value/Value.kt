@@ -378,6 +378,11 @@ class LazySequenceValue private constructor(
     fun asSequence(): Sequence<Value> = generator()
 
     companion object {
+        /** Create sequence from generator function. */
+        fun fromGenerator(generator: () -> Sequence<Value>): LazySequenceValue {
+            return LazySequenceValue(generator)
+        }
+
         /** Create sequence by repeatedly applying function: iterate(f, init) -> init, f(init), f(f(init)), ... */
         fun iterate(initial: Value, f: (Value) -> Value): LazySequenceValue {
             return LazySequenceValue {

@@ -38,6 +38,7 @@ object Builtins {
             val grapheme = value.graphemeAt(0)
             if (grapheme != null) StringValue(grapheme) else NilValue
         }
+        is LazySequenceValue -> value.generator().firstOrNull() ?: NilValue
         else -> throw SantaRuntimeException("first: expected List or String, got ${value.typeName()}")
     }
 
@@ -52,6 +53,10 @@ object Builtins {
             value.slice(1, value.size())
         }
         is StringValue -> StringValue(value.graphemeSlice(1, value.graphemeLength()))
+        is LazySequenceValue -> {
+            val seq = value.generator()
+            LazySequenceValue.fromGenerator { seq.drop(1) }
+        }
         else -> throw SantaRuntimeException("rest: expected List or String, got ${value.typeName()}")
     }
 
@@ -1243,6 +1248,14 @@ object Builtins {
     @JvmStatic
     fun max(a: Value, b: Value, c: Value): Value {
         return max(max(a, b), c)
+    }
+
+    /**
+     * max(a, b, c, d) - Find maximum of four values.
+     */
+    @JvmStatic
+    fun max(a: Value, b: Value, c: Value, d: Value): Value {
+        return max(max(a, b), max(c, d))
     }
 
     /**

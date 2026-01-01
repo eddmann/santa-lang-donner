@@ -30,6 +30,8 @@ private data class CaptureInfo(
     val name: String,
     val slot: Int,  // Slot in the enclosing scope
     val isSelfRef: Boolean = false,  // True if this is a self-reference for recursion
+    val isMutable: Boolean = false,  // True if this is a mutable variable
+    val isBoxed: Boolean = false,    // True if boxed in a Value[] array for mutable capture
 )
 
 /**
@@ -172,10 +174,11 @@ private class ClassGenerator(private val className: String) {
         // Generate fields for captured variables (excluding self-references which use base class field)
         val nonSelfCaptures = captures.filter { !it.isSelfRef }
         for (capture in nonSelfCaptures) {
+            val fieldType = if (capture.isBoxed) "[L${VALUE_TYPE};" else "L${VALUE_TYPE};"
             lcw.visitField(
                 ACC_PRIVATE or ACC_FINAL,
                 capture.name,
-                "L${VALUE_TYPE};",
+                fieldType,
                 null,
                 null
             ).visitEnd()
@@ -201,7 +204,13 @@ private class ClassGenerator(private val className: String) {
         // Constructor signature: (capture1, capture2, ...) -> void
         val desc = buildString {
             append('(')
-            repeat(captures.size) { append("L${VALUE_TYPE};") }
+            for (capture in captures) {
+                if (capture.isBoxed) {
+                    append("[L${VALUE_TYPE};")
+                } else {
+                    append("L${VALUE_TYPE};")
+                }
+            }
             append(")V")
         }
 
@@ -216,9 +225,10 @@ private class ClassGenerator(private val className: String) {
 
         // Store captured values in fields
         for ((index, capture) in captures.withIndex()) {
+            val fieldType = if (capture.isBoxed) "[L${VALUE_TYPE};" else "L${VALUE_TYPE};"
             mv.visitVarInsn(ALOAD, 0)  // this
             mv.visitVarInsn(ALOAD, index + 1)  // captured value
-            mv.visitFieldInsn(PUTFIELD, lambdaClassName, capture.name, "L${VALUE_TYPE};")
+            mv.visitFieldInsn(PUTFIELD, lambdaClassName, capture.name, fieldType)
         }
 
         mv.visitInsn(RETURN)
@@ -345,6 +355,7 @@ private data class LocalBinding(
     val name: String,
     val slot: Int,
     val isMutable: Boolean,
+    val isBoxed: Boolean = false,  // True if stored in Value[] for mutable capture
 )
 
 /**
@@ -385,6 +396,9 @@ private open class ExpressionGenerator(
 
     // Tracks the name of a self-referential binding being compiled (for recursive functions)
     protected var currentSelfRefName: String? = null
+
+    // Tracks mutable variables that need to be boxed in the current scope
+    protected var boxedMutables: Set<String> = emptySet()
 
     init {
         pushScope()
@@ -685,6 +699,11 @@ private open class ExpressionGenerator(
         val binding = lookupBinding(expr.name)
         if (binding != null) {
             mv.visitVarInsn(ALOAD, binding.slot)
+            if (binding.isBoxed) {
+                // Unbox: load array[0]
+                mv.visitInsn(ICONST_0)
+                mv.visitInsn(AALOAD)
+            }
             return
         }
 
@@ -711,10 +730,21 @@ private open class ExpressionGenerator(
         if (!binding.isMutable) {
             throw CodegenException("Cannot assign to immutable variable: ${expr.target.name}")
         }
-        compileExpr(expr.value)
-        // Duplicate the value so assignment expression returns the assigned value
-        mv.visitInsn(DUP)
-        mv.visitVarInsn(ASTORE, binding.slot)
+
+        if (binding.isBoxed) {
+            // Write through box: array[0] = value
+            mv.visitVarInsn(ALOAD, binding.slot)  // Load the array
+            mv.visitInsn(ICONST_0)                 // Index 0
+            compileExpr(expr.value)                // Compute the value
+            mv.visitInsn(DUP_X2)                   // Duplicate value under array and index
+            mv.visitInsn(AASTORE)                  // array[0] = value
+            // Value is left on stack as the result of assignment
+        } else {
+            compileExpr(expr.value)
+            // Duplicate the value so assignment expression returns the assigned value
+            mv.visitInsn(DUP)
+            mv.visitVarInsn(ASTORE, binding.slot)
+        }
     }
 
     private fun compileLetStatement(expr: LetExpr) {
@@ -778,9 +808,26 @@ private open class ExpressionGenerator(
                     pushNil()
                 } else {
                     // Non-self-referential binding: standard approach
+                    val needsBoxing = expr.isMutable && pattern.name in boxedMutables
                     compileExpr(expr.value)
-                    declareBinding(pattern.name, slot, expr.isMutable)
-                    mv.visitVarInsn(ASTORE, slot)
+
+                    if (needsBoxing) {
+                        // Box mutable captured variable in Value[] array
+                        // Stack: value
+                        mv.visitInsn(ICONST_1)  // Array size 1
+                        mv.visitTypeInsn(ANEWARRAY, VALUE_TYPE)  // new Value[1]
+                        // Stack: value, array
+                        mv.visitInsn(DUP_X1)  // array, value, array
+                        mv.visitInsn(SWAP)    // array, array, value
+                        mv.visitInsn(ICONST_0) // array, array, value, 0
+                        mv.visitInsn(SWAP)    // array, array, 0, value
+                        mv.visitInsn(AASTORE) // array[0] = value; Stack: array
+                        mv.visitVarInsn(ASTORE, slot)
+                        declareBinding(pattern.name, slot, isMutable = true, isBoxed = true)
+                    } else {
+                        declareBinding(pattern.name, slot, expr.isMutable)
+                        mv.visitVarInsn(ASTORE, slot)
+                    }
                     pushNil()
                 }
             }
@@ -794,7 +841,7 @@ private open class ExpressionGenerator(
                 mv.visitVarInsn(ASTORE, listSlot)
 
                 // Bind each element of the list pattern
-                compileListPatternBindings(pattern, listSlot)
+                compileListPatternBindings(pattern, listSlot, expr.isMutable)
 
                 // Let statement returns nil
                 pushNil()
@@ -912,6 +959,11 @@ private open class ExpressionGenerator(
     private fun compileBlock(expr: BlockExpr) {
         pushScope()
 
+        // Pre-analyze to find mutable variables that need boxing
+        // (they are mutable AND captured by nested lambdas)
+        val savedBoxedMutables = boxedMutables
+        boxedMutables = boxedMutables + findBoxedMutables(expr)
+
         if (expr.statements.isEmpty()) {
             pushNil()
         } else {
@@ -924,7 +976,39 @@ private open class ExpressionGenerator(
             }
         }
 
+        boxedMutables = savedBoxedMutables
         popScope()
+    }
+
+    /**
+     * Find mutable variables in a block that need to be boxed because
+     * they are captured by nested lambdas.
+     */
+    private fun findBoxedMutables(block: BlockExpr): Set<String> {
+        val boxed = mutableSetOf<String>()
+        val mutableVars = mutableSetOf<String>()
+
+        // First pass: find all mutable variable declarations
+        for (stmt in block.statements) {
+            if (stmt is LetExpr && stmt.isMutable) {
+                mutableVars.addAll(collectPatternBindings(stmt.pattern))
+            }
+        }
+
+        // Second pass: find which mutables are captured by lambdas
+        for (stmt in block.statements) {
+            val expr = when (stmt) {
+                is ExprStatement -> stmt.expr
+                is LetExpr -> stmt.value
+                is ReturnExpr -> stmt.value
+                is BreakExpr -> stmt.value
+            } ?: continue
+
+            val captured = findCapturedVariables(expr, mutableVars)
+            boxed.addAll(captured.filter { it in mutableVars })
+        }
+
+        return boxed
     }
 
     private fun compileIfExpr(expr: IfExpr) {
@@ -1236,7 +1320,51 @@ private open class ExpressionGenerator(
                     compileListPatternMatch(element, nestedSlot, failLabel)
                     elementIndex++
                 }
-                is RangePattern -> TODO("Range patterns in lists not yet implemented")
+                is RangePattern -> {
+                    // Range pattern - check if element is in range
+                    mv.visitVarInsn(ALOAD, listSlot)
+                    pushIntValue(elementIndex)
+                    mv.visitMethodInsn(
+                        INVOKEVIRTUAL,
+                        LIST_VALUE_TYPE,
+                        "get",
+                        "(I)L${VALUE_TYPE};",
+                        false
+                    )
+                    // Cast to IntValue and get the value
+                    mv.visitTypeInsn(CHECKCAST, INT_VALUE_TYPE)
+                    mv.visitMethodInsn(
+                        INVOKEVIRTUAL,
+                        INT_VALUE_TYPE,
+                        "getValue",
+                        "()J",
+                        false
+                    )
+                    val valueSlot = allocateSlot()
+                    // Store as long (takes 2 slots)
+                    mv.visitVarInsn(LSTORE, valueSlot)
+
+                    // Check start bound: value >= start
+                    val startValue = element.start.toLong()
+                    mv.visitVarInsn(LLOAD, valueSlot)
+                    mv.visitLdcInsn(startValue)
+                    mv.visitInsn(LCMP)
+                    mv.visitJumpInsn(IFLT, failLabel)  // if value < start, fail
+
+                    // Check end bound if not unbounded
+                    if (element.end != null) {
+                        val endValue = element.end.toLong()
+                        mv.visitVarInsn(LLOAD, valueSlot)
+                        mv.visitLdcInsn(endValue)
+                        mv.visitInsn(LCMP)
+                        if (element.isInclusive) {
+                            mv.visitJumpInsn(IFGT, failLabel)  // if value > end, fail
+                        } else {
+                            mv.visitJumpInsn(IFGE, failLabel)  // if value >= end, fail
+                        }
+                    }
+                    elementIndex++
+                }
             }
         }
     }
@@ -1247,7 +1375,7 @@ private open class ExpressionGenerator(
      * Bind pattern elements from a list without failure checking.
      * Used for let destructuring where the pattern is expected to always match.
      */
-    protected fun compileListPatternBindings(pattern: ListPattern, listSlot: Int) {
+    protected fun compileListPatternBindings(pattern: ListPattern, listSlot: Int, isMutable: Boolean = false) {
         // Get size for rest patterns
         mv.visitVarInsn(ALOAD, listSlot)
         mv.visitMethodInsn(
@@ -1277,7 +1405,7 @@ private open class ExpressionGenerator(
                             false
                         )
                         val slot = allocateSlot()
-                        declareBinding(element.name, slot, isMutable = false)
+                        declareBinding(element.name, slot, isMutable)
                         mv.visitVarInsn(ASTORE, slot)
                     }
                     break
@@ -1294,7 +1422,7 @@ private open class ExpressionGenerator(
                         false
                     )
                     val slot = allocateSlot()
-                    declareBinding(element.name, slot, isMutable = false)
+                    declareBinding(element.name, slot, isMutable)
                     mv.visitVarInsn(ASTORE, slot)
                     elementIndex++
                 }
@@ -1315,7 +1443,7 @@ private open class ExpressionGenerator(
                     mv.visitTypeInsn(CHECKCAST, LIST_VALUE_TYPE)
                     val nestedSlot = allocateSlot()
                     mv.visitVarInsn(ASTORE, nestedSlot)
-                    compileListPatternBindings(element, nestedSlot)
+                    compileListPatternBindings(element, nestedSlot, isMutable)
                     elementIndex++
                 }
                 is LiteralPattern, is RangePattern -> {
@@ -1496,7 +1624,13 @@ private open class ExpressionGenerator(
         val freeVars = findFreeVariables(expr.body, expr.params)
         val captures = freeVars.mapNotNull { name ->
             lookupBinding(name)?.let { binding ->
-                CaptureInfo(name, binding.slot, isSelfRef = name == currentSelfRefName)
+                CaptureInfo(
+                    name,
+                    binding.slot,
+                    isSelfRef = name == currentSelfRefName,
+                    isMutable = binding.isMutable,
+                    isBoxed = binding.isBoxed
+                )
             }
         }
 
@@ -1516,7 +1650,13 @@ private open class ExpressionGenerator(
         // Constructor descriptor
         val constructorDesc = buildString {
             append('(')
-            repeat(nonSelfCaptures.size) { append("L${VALUE_TYPE};") }
+            for (capture in nonSelfCaptures) {
+                if (capture.isBoxed) {
+                    append("[L${VALUE_TYPE};")
+                } else {
+                    append("L${VALUE_TYPE};")
+                }
+            }
             append(")V")
         }
 
@@ -1661,6 +1801,112 @@ private open class ExpressionGenerator(
                 PlaceholderParam -> emptyList()
             }
         }.toSet()
+    }
+
+    /**
+     * Find variables captured by nested lambdas in an expression.
+     * Used to identify which mutable variables need to be boxed.
+     */
+    protected fun findCapturedVariables(expr: Expr, declared: Set<String> = emptySet()): Set<String> {
+        val captured = mutableSetOf<String>()
+
+        fun visit(e: Expr, bound: Set<String>) {
+            when (e) {
+                is FunctionExpr -> {
+                    // This is a nested lambda - find its free variables
+                    val fnParams = collectParamBindings(e.params)
+                    val freeVars = findFreeVariables(e.body, e.params)
+                    // Variables free in the lambda but declared in our scope are captured
+                    captured.addAll(freeVars.filter { it in bound || it in declared })
+                    // Also recurse into the lambda body to find captures from nested lambdas
+                    visit(e.body, bound + fnParams)
+                }
+                is BinaryExpr -> { visit(e.left, bound); visit(e.right, bound) }
+                is UnaryExpr -> visit(e.expr, bound)
+                is LetExpr -> {
+                    visit(e.value, bound)
+                }
+                is BlockExpr -> {
+                    var currentBound = bound
+                    for (stmt in e.statements) {
+                        when (stmt) {
+                            is ExprStatement -> visit(stmt.expr, currentBound)
+                            is LetExpr -> {
+                                visit(stmt.value, currentBound)
+                                currentBound = currentBound + collectPatternBindings(stmt.pattern)
+                            }
+                            is ReturnExpr -> stmt.value?.let { visit(it, currentBound) }
+                            is BreakExpr -> stmt.value?.let { visit(it, currentBound) }
+                        }
+                    }
+                }
+                is CallExpr -> {
+                    visit(e.callee, bound)
+                    for (arg in e.arguments) {
+                        visit(arg.expr, bound)
+                    }
+                }
+                is IfExpr -> {
+                    val thenBound = when (val cond = e.condition) {
+                        is ExprCondition -> {
+                            visit(cond.expr, bound)
+                            bound
+                        }
+                        is LetCondition -> {
+                            visit(cond.value, bound)
+                            bound + collectPatternBindings(cond.pattern)
+                        }
+                    }
+                    visit(e.thenBranch, thenBound)
+                    e.elseBranch?.let { visit(it, bound) }
+                }
+                is MatchExpr -> {
+                    visit(e.subject, bound)
+                    for (arm in e.arms) {
+                        val patternBound = collectPatternBindings(arm.pattern)
+                        arm.guard?.let { visit(it, bound + patternBound) }
+                        visit(arm.body, bound + patternBound)
+                    }
+                }
+                is IndexExpr -> { visit(e.target, bound); visit(e.index, bound) }
+                is AssignmentExpr -> visit(e.value, bound)
+                is ListLiteralExpr -> e.elements.forEach { elem ->
+                    when (elem) {
+                        is ExprElement -> visit(elem.expr, bound)
+                        is SpreadElement -> visit(elem.expr, bound)
+                    }
+                }
+                is SetLiteralExpr -> e.elements.forEach { elem ->
+                    when (elem) {
+                        is ExprElement -> visit(elem.expr, bound)
+                        is SpreadElement -> visit(elem.expr, bound)
+                    }
+                }
+                is DictLiteralExpr -> e.entries.forEach { entry ->
+                    when (entry) {
+                        is KeyValueEntry -> {
+                            visit(entry.key, bound)
+                            visit(entry.value, bound)
+                        }
+                        is ShorthandEntry -> { /* no nested expressions */ }
+                    }
+                }
+                is RangeExpr -> {
+                    visit(e.start, bound)
+                    e.end?.let { visit(it, bound) }
+                }
+                is InfixCallExpr -> {
+                    visit(e.left, bound)
+                    visit(e.right, bound)
+                }
+                is ReturnExpr -> e.value?.let { visit(it, bound) }
+                is BreakExpr -> e.value?.let { visit(it, bound) }
+                else -> { /* literals, identifiers, etc. */ }
+            }
+        }
+
+        visit(expr, declared)
+        return captured
     }
 
     /**
@@ -2001,8 +2247,8 @@ private open class ExpressionGenerator(
         scopes.removeLast()
     }
 
-    fun declareBinding(name: String, slot: Int, isMutable: Boolean) {
-        scopes.last()[name] = LocalBinding(name, slot, isMutable)
+    fun declareBinding(name: String, slot: Int, isMutable: Boolean, isBoxed: Boolean = false) {
+        scopes.last()[name] = LocalBinding(name, slot, isMutable, isBoxed)
     }
 
     protected fun lookupBinding(name: String): LocalBinding? {
@@ -2260,18 +2506,19 @@ private open class LambdaExpressionGenerator(
                 )
             } else {
                 // Load from this.fieldName
+                val fieldType = if (capture.isBoxed) "[L${VALUE_TYPE};" else "L${VALUE_TYPE};"
                 mv.visitVarInsn(ALOAD, 0) // this
                 mv.visitFieldInsn(
                     GETFIELD,
                     lambdaClassName,
                     capture.name,
-                    "L${VALUE_TYPE};"
+                    fieldType
                 )
             }
             // Store in local slot
             val slot = nextSlot++
             mv.visitVarInsn(ASTORE, slot)
-            declareBinding(capture.name, slot, isMutable = false)
+            declareBinding(capture.name, slot, isMutable = capture.isMutable, isBoxed = capture.isBoxed)
         }
     }
 
@@ -2282,6 +2529,11 @@ private open class LambdaExpressionGenerator(
                 val localBinding = lookupBinding(expr.name)
                 if (localBinding != null) {
                     mv.visitVarInsn(ALOAD, localBinding.slot)
+                    if (localBinding.isBoxed) {
+                        // Unbox: load array[0]
+                        mv.visitInsn(ICONST_0)
+                        mv.visitInsn(AALOAD)
+                    }
                     return
                 }
 
@@ -2299,13 +2551,19 @@ private open class LambdaExpressionGenerator(
                         )
                     } else {
                         // Load from this.fieldName
+                        val fieldType = if (capture.isBoxed) "[L${VALUE_TYPE};" else "L${VALUE_TYPE};"
                         mv.visitVarInsn(ALOAD, 0) // this
                         mv.visitFieldInsn(
                             GETFIELD,
                             lambdaClassName,
                             capture.name,
-                            "L${VALUE_TYPE};"
+                            fieldType
                         )
+                        if (capture.isBoxed) {
+                            // Unbox: load array[0]
+                            mv.visitInsn(ICONST_0)
+                            mv.visitInsn(AALOAD)
+                        }
                     }
                 } else {
                     // Fall back to parent lookup (builtins)
