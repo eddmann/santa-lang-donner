@@ -432,11 +432,16 @@ object Builtins {
 
     /**
      * lines(string) - Split string on newline characters.
+     * Drops trailing empty string if present (common with files having trailing newline).
      */
     @JvmStatic
     fun lines(value: Value): Value = when (value) {
         is StringValue -> {
-            val parts = value.value.split("\n").map { StringValue(it) as Value }
+            var parts = value.value.split("\n").map { StringValue(it) as Value }
+            // Drop trailing empty string from trailing newline
+            if (parts.isNotEmpty() && (parts.last() as StringValue).value.isEmpty()) {
+                parts = parts.dropLast(1)
+            }
             ListValue(parts.toPersistentList())
         }
         else -> throw SantaRuntimeException("lines: expected String, got ${value.typeName()}")
@@ -1178,6 +1183,7 @@ object Builtins {
             is SetValue -> collection.elements.toList()
             is DictValue -> collection.entries.values.toList()
             is RangeValue -> collection.asSequence().toList()
+            is LazySequenceValue -> collection.take(Int.MAX_VALUE).toList()
             else -> throw SantaRuntimeException("sum: expected collection, got ${collection.typeName()}")
         }
         if (items.isEmpty()) return IntValue(0)
@@ -1544,6 +1550,7 @@ object Builtins {
                 predicate.invoke(listOf(StringValue(it))).isTruthy()
             }
             is RangeValue -> collection.asSequence().all { predicate.invoke(listOf(it)).isTruthy() }
+            is LazySequenceValue -> collection.take(Int.MAX_VALUE).all { predicate.invoke(listOf(it)).isTruthy() }
             else -> throw SantaRuntimeException("all?: expected bounded collection, got ${collection.typeName()}")
         }
         return BoolValue.box(allMatch)

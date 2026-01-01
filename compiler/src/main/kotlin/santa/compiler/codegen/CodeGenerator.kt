@@ -389,7 +389,7 @@ private open class ExpressionGenerator(
             is ReturnExpr -> compileReturnExpr(expr)
             is BreakExpr -> compileBreakExpr(expr)
             is RangeExpr -> compileRangeExpr(expr)
-            is InfixCallExpr -> TODO("Infix calls not yet implemented")
+            is InfixCallExpr -> compileInfixCall(expr)
             is CallExpr -> compileCall(expr)
             is IndexExpr -> compileIndex(expr)
             is FunctionExpr -> compileFunctionExpr(expr)
@@ -1584,7 +1584,14 @@ private open class ExpressionGenerator(
                 // Terminals that don't contain expressions
                 is IntLiteralExpr, is DecimalLiteralExpr, is StringLiteralExpr,
                 is BoolLiteralExpr, is NilLiteralExpr, is PlaceholderExpr, is OperatorExpr -> { }
-                is InfixCallExpr -> { }
+                is InfixCallExpr -> {
+                    // Function name could be a user-defined function
+                    if (e.functionName !in bound && e.functionName !in BUILTIN_FUNCTIONS) {
+                        freeVars.add(e.functionName)
+                    }
+                    visit(e.left, bound)
+                    visit(e.right, bound)
+                }
                 is ReturnExpr -> e.value?.let { visit(it, bound) }
                 is BreakExpr -> e.value?.let { visit(it, bound) }
                 is TestBlockExpr -> {
@@ -1729,6 +1736,53 @@ private open class ExpressionGenerator(
             mv.visitInsn(SWAP) // Move args list below callee
             mv.visitTypeInsn(CHECKCAST, FUNCTION_VALUE_TYPE)
             mv.visitInsn(SWAP) // Move callee below args list again
+            mv.visitMethodInsn(
+                INVOKEVIRTUAL,
+                FUNCTION_VALUE_TYPE,
+                "invoke",
+                "(Ljava/util/List;)L${VALUE_TYPE};",
+                false
+            )
+        }
+    }
+
+    /**
+     * Compile infix function call: `left \`func\` right` → `func(left, right)`
+     */
+    private fun compileInfixCall(expr: InfixCallExpr) {
+        val functionName = expr.functionName
+        val arguments = listOf(ExprArgument(expr.left), ExprArgument(expr.right))
+
+        // Check if it's a builtin function
+        if (functionName in BUILTIN_FUNCTIONS) {
+            compileBuiltinCall(functionName, arguments)
+        } else {
+            // User-defined function - look up by name and call
+            compileExpr(IdentifierExpr(functionName, expr.span))
+
+            // Build argument list
+            pushIntValue(2)
+            mv.visitTypeInsn(ANEWARRAY, VALUE_TYPE)
+            mv.visitInsn(DUP)
+            pushIntValue(0)
+            compileExpr(expr.left)
+            mv.visitInsn(AASTORE)
+            mv.visitInsn(DUP)
+            pushIntValue(1)
+            compileExpr(expr.right)
+            mv.visitInsn(AASTORE)
+            mv.visitMethodInsn(
+                INVOKESTATIC,
+                "java/util/Arrays",
+                "asList",
+                "([Ljava/lang/Object;)Ljava/util/List;",
+                false
+            )
+
+            // Cast callee to FunctionValue and invoke
+            mv.visitInsn(SWAP)
+            mv.visitTypeInsn(CHECKCAST, FUNCTION_VALUE_TYPE)
+            mv.visitInsn(SWAP)
             mv.visitMethodInsn(
                 INVOKEVIRTUAL,
                 FUNCTION_VALUE_TYPE,

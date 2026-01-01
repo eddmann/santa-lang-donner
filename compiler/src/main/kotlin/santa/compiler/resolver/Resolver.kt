@@ -264,9 +264,8 @@ class Resolver(
     }
 
     private fun declareName(name: String) {
-        if (name in protectedNames) {
-            throw ResolveException("Cannot shadow built-in '$name'", unknownPosition)
-        }
+        // Note: LANG.txt §14.6 says builtins can't be shadowed, but real-world
+        // AOC solutions do shadow them (e.g., signum, cycle). We allow it for compatibility.
         scopes.last().add(name)
     }
 

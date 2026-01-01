@@ -1,6 +1,7 @@
 package santa.compiler.codegen
 
 import santa.compiler.desugar.PatternParamDesugarer
+import santa.compiler.desugar.PipelineDesugarer
 import santa.compiler.desugar.PlaceholderDesugarer
 import santa.compiler.lexer.Lexer
 import santa.compiler.parser.Parser
@@ -36,7 +37,8 @@ object Compiler {
         val tokens = Lexer(source).lex()
         val parsedProgram = Parser(tokens).parseProgram()
         val desugared1 = PlaceholderDesugarer.desugar(parsedProgram)
-        val program = PatternParamDesugarer.desugar(desugared1)
+        val desugared2 = PipelineDesugarer.desugar(desugared1)
+        val program = PatternParamDesugarer.desugar(desugared2)
         Resolver().resolve(program)
         val script = CodeGenerator.generate(program)
         return CompileResult(program, script)
@@ -48,7 +50,8 @@ object Compiler {
      */
     fun compileProgram(program: Program): CompiledScript {
         val desugared1 = PlaceholderDesugarer.desugar(program)
-        val desugared = PatternParamDesugarer.desugar(desugared1)
+        val desugared2 = PipelineDesugarer.desugar(desugared1)
+        val desugared = PatternParamDesugarer.desugar(desugared2)
         Resolver().resolve(desugared)
         return CodeGenerator.generate(desugared)
     }
