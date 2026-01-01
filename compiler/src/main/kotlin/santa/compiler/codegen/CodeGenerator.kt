@@ -1202,9 +1202,12 @@ private open class ExpressionGenerator(
         val listSlot = allocateSlot()
         mv.visitVarInsn(ASTORE, listSlot)
 
-        // Check for rest pattern
-        val hasRest = pattern.elements.any { it is RestPattern }
-        val nonRestCount = pattern.elements.count { it !is RestPattern }
+        // Find rest pattern position and count elements before/after
+        val restIndex = pattern.elements.indexOfFirst { it is RestPattern }
+        val hasRest = restIndex >= 0
+        val beforeRestCount = if (hasRest) restIndex else pattern.elements.size
+        val afterRestCount = if (hasRest) pattern.elements.size - restIndex - 1 else 0
+        val nonRestCount = beforeRestCount + afterRestCount
 
         // Get size once and store it
         mv.visitVarInsn(ALOAD, listSlot)
@@ -1230,140 +1233,171 @@ private open class ExpressionGenerator(
             mv.visitJumpInsn(IF_ICMPNE, failLabel) // Fail if size != pattern size
         }
 
-        // Match each element
-        var elementIndex = 0
-        for (element in pattern.elements) {
-            when (element) {
-                is RestPattern -> {
-                    // Capture remaining elements as a list using slice(startIndex, size)
-                    if (element.name != null) {
-                        mv.visitVarInsn(ALOAD, listSlot)
-                        pushIntValue(elementIndex)
-                        mv.visitVarInsn(ILOAD, sizeSlot)
-                        mv.visitMethodInsn(
-                            INVOKEVIRTUAL,
-                            LIST_VALUE_TYPE,
-                            "slice",
-                            "(II)L${LIST_VALUE_TYPE};",
-                            false
-                        )
-                        val slot = allocateSlot()
-                        declareBinding(element.name, slot, isMutable = false)
-                        mv.visitVarInsn(ASTORE, slot)
-                    }
-                    // Rest consumes all remaining elements, stop here
-                    break
-                }
-                is BindingPattern -> {
-                    // Get element at index and bind
-                    mv.visitVarInsn(ALOAD, listSlot)
-                    pushIntValue(elementIndex)
-                    mv.visitMethodInsn(
-                        INVOKEVIRTUAL,
-                        LIST_VALUE_TYPE,
-                        "get",
-                        "(I)L${VALUE_TYPE};",
-                        false
-                    )
-                    val slot = allocateSlot()
-                    declareBinding(element.name, slot, isMutable = false)
-                    mv.visitVarInsn(ASTORE, slot)
-                    elementIndex++
-                }
-                is WildcardPattern -> {
-                    // Skip this element
-                    elementIndex++
-                }
-                is LiteralPattern -> {
-                    // Get element and compare with literal
-                    mv.visitVarInsn(ALOAD, listSlot)
-                    pushIntValue(elementIndex)
-                    mv.visitMethodInsn(
-                        INVOKEVIRTUAL,
-                        LIST_VALUE_TYPE,
-                        "get",
-                        "(I)L${VALUE_TYPE};",
-                        false
-                    )
-                    compileExpr(element.literal)
-                    mv.visitMethodInsn(
-                        INVOKESTATIC,
-                        OPERATORS_TYPE,
-                        "equal",
-                        "(L${VALUE_TYPE};L${VALUE_TYPE};)L${VALUE_TYPE};",
-                        false
-                    )
-                    mv.visitMethodInsn(
-                        INVOKESTATIC,
-                        OPERATORS_TYPE,
-                        "isTruthy",
-                        "(L${VALUE_TYPE};)Z",
-                        false
-                    )
-                    mv.visitJumpInsn(IFEQ, failLabel)
-                    elementIndex++
-                }
-                is ListPattern -> {
-                    // Nested list pattern - get element and recursively match
-                    mv.visitVarInsn(ALOAD, listSlot)
-                    pushIntValue(elementIndex)
-                    mv.visitMethodInsn(
-                        INVOKEVIRTUAL,
-                        LIST_VALUE_TYPE,
-                        "get",
-                        "(I)L${VALUE_TYPE};",
-                        false
-                    )
-                    // Store nested element in a temp slot
-                    val nestedSlot = allocateSlot()
-                    mv.visitVarInsn(ASTORE, nestedSlot)
-                    compileListPatternMatch(element, nestedSlot, failLabel)
-                    elementIndex++
-                }
-                is RangePattern -> {
-                    // Range pattern - check if element is in range
-                    mv.visitVarInsn(ALOAD, listSlot)
-                    pushIntValue(elementIndex)
-                    mv.visitMethodInsn(
-                        INVOKEVIRTUAL,
-                        LIST_VALUE_TYPE,
-                        "get",
-                        "(I)L${VALUE_TYPE};",
-                        false
-                    )
-                    // Cast to IntValue and get the value
-                    mv.visitTypeInsn(CHECKCAST, INT_VALUE_TYPE)
-                    mv.visitMethodInsn(
-                        INVOKEVIRTUAL,
-                        INT_VALUE_TYPE,
-                        "getValue",
-                        "()J",
-                        false
-                    )
-                    val valueSlot = allocateSlot()
-                    // Store as long (takes 2 slots)
-                    mv.visitVarInsn(LSTORE, valueSlot)
+        // Helper to get element at a given index (compile-time constant or runtime calculation)
+        fun getElementAt(constantIndex: Int) {
+            mv.visitVarInsn(ALOAD, listSlot)
+            pushIntValue(constantIndex)
+            mv.visitMethodInsn(
+                INVOKEVIRTUAL,
+                LIST_VALUE_TYPE,
+                "get",
+                "(I)L${VALUE_TYPE};",
+                false
+            )
+        }
 
-                    // Check start bound: value >= start
-                    val startValue = element.start.toLong()
+        // Helper to get element at (size - offset) for elements after rest
+        fun getElementFromEnd(offsetFromEnd: Int) {
+            mv.visitVarInsn(ALOAD, listSlot)
+            mv.visitVarInsn(ILOAD, sizeSlot)
+            pushIntValue(offsetFromEnd)
+            mv.visitInsn(ISUB)
+            mv.visitMethodInsn(
+                INVOKEVIRTUAL,
+                LIST_VALUE_TYPE,
+                "get",
+                "(I)L${VALUE_TYPE};",
+                false
+            )
+        }
+
+        // Process elements before rest pattern
+        for (i in 0 until beforeRestCount) {
+            val element = pattern.elements[i]
+            compileListPatternElementMatch(element, listSlot, sizeSlot, failLabel, i, false, 0)
+        }
+
+        // Process rest pattern if present
+        if (hasRest) {
+            val restPattern = pattern.elements[restIndex] as RestPattern
+            if (restPattern.name != null) {
+                // Capture elements from beforeRestCount to (size - afterRestCount)
+                mv.visitVarInsn(ALOAD, listSlot)
+                pushIntValue(beforeRestCount)
+                mv.visitVarInsn(ILOAD, sizeSlot)
+                pushIntValue(afterRestCount)
+                mv.visitInsn(ISUB)
+                mv.visitMethodInsn(
+                    INVOKEVIRTUAL,
+                    LIST_VALUE_TYPE,
+                    "slice",
+                    "(II)L${LIST_VALUE_TYPE};",
+                    false
+                )
+                val slot = allocateSlot()
+                declareBinding(restPattern.name, slot, isMutable = false)
+                mv.visitVarInsn(ASTORE, slot)
+            }
+
+            // Process elements after rest pattern (indexed from the end)
+            for (i in 0 until afterRestCount) {
+                val element = pattern.elements[restIndex + 1 + i]
+                val offsetFromEnd = afterRestCount - i
+                compileListPatternElementMatch(element, listSlot, sizeSlot, failLabel, 0, true, offsetFromEnd)
+            }
+        }
+    }
+
+    /**
+     * Compile matching for a single element in a list pattern.
+     * @param fromEnd if true, use (size - offsetFromEnd) as index; otherwise use constantIndex
+     */
+    private fun compileListPatternElementMatch(
+        element: Pattern,
+        listSlot: Int,
+        sizeSlot: Int,
+        failLabel: Label,
+        constantIndex: Int,
+        fromEnd: Boolean,
+        offsetFromEnd: Int
+    ) {
+        // Helper to load element at the appropriate index
+        fun loadElement() {
+            mv.visitVarInsn(ALOAD, listSlot)
+            if (fromEnd) {
+                mv.visitVarInsn(ILOAD, sizeSlot)
+                pushIntValue(offsetFromEnd)
+                mv.visitInsn(ISUB)
+            } else {
+                pushIntValue(constantIndex)
+            }
+            mv.visitMethodInsn(
+                INVOKEVIRTUAL,
+                LIST_VALUE_TYPE,
+                "get",
+                "(I)L${VALUE_TYPE};",
+                false
+            )
+        }
+
+        when (element) {
+            is RestPattern -> {
+                // Should not happen - rest is handled separately
+                throw CodegenException("RestPattern should not be passed to compileListPatternElementMatch")
+            }
+            is BindingPattern -> {
+                loadElement()
+                val slot = allocateSlot()
+                declareBinding(element.name, slot, isMutable = false)
+                mv.visitVarInsn(ASTORE, slot)
+            }
+            is WildcardPattern -> {
+                // Nothing to do - just skip
+            }
+            is LiteralPattern -> {
+                loadElement()
+                compileExpr(element.literal)
+                mv.visitMethodInsn(
+                    INVOKESTATIC,
+                    OPERATORS_TYPE,
+                    "equal",
+                    "(L${VALUE_TYPE};L${VALUE_TYPE};)L${VALUE_TYPE};",
+                    false
+                )
+                mv.visitMethodInsn(
+                    INVOKESTATIC,
+                    OPERATORS_TYPE,
+                    "isTruthy",
+                    "(L${VALUE_TYPE};)Z",
+                    false
+                )
+                mv.visitJumpInsn(IFEQ, failLabel)
+            }
+            is ListPattern -> {
+                loadElement()
+                val nestedSlot = allocateSlot()
+                mv.visitVarInsn(ASTORE, nestedSlot)
+                compileListPatternMatch(element, nestedSlot, failLabel)
+            }
+            is RangePattern -> {
+                loadElement()
+                mv.visitTypeInsn(CHECKCAST, INT_VALUE_TYPE)
+                mv.visitMethodInsn(
+                    INVOKEVIRTUAL,
+                    INT_VALUE_TYPE,
+                    "getValue",
+                    "()J",
+                    false
+                )
+                val valueSlot = allocateSlot()
+                mv.visitVarInsn(LSTORE, valueSlot)
+
+                val startValue = element.start.toLong()
+                mv.visitVarInsn(LLOAD, valueSlot)
+                mv.visitLdcInsn(startValue)
+                mv.visitInsn(LCMP)
+                mv.visitJumpInsn(IFLT, failLabel)
+
+                if (element.end != null) {
+                    val endValue = element.end.toLong()
                     mv.visitVarInsn(LLOAD, valueSlot)
-                    mv.visitLdcInsn(startValue)
+                    mv.visitLdcInsn(endValue)
                     mv.visitInsn(LCMP)
-                    mv.visitJumpInsn(IFLT, failLabel)  // if value < start, fail
-
-                    // Check end bound if not unbounded
-                    if (element.end != null) {
-                        val endValue = element.end.toLong()
-                        mv.visitVarInsn(LLOAD, valueSlot)
-                        mv.visitLdcInsn(endValue)
-                        mv.visitInsn(LCMP)
-                        if (element.isInclusive) {
-                            mv.visitJumpInsn(IFGT, failLabel)  // if value > end, fail
-                        } else {
-                            mv.visitJumpInsn(IFGE, failLabel)  // if value >= end, fail
-                        }
+                    if (element.isInclusive) {
+                        mv.visitJumpInsn(IFGT, failLabel)
+                    } else {
+                        mv.visitJumpInsn(IFGE, failLabel)
                     }
-                    elementIndex++
                 }
             }
         }
@@ -1376,7 +1410,13 @@ private open class ExpressionGenerator(
      * Used for let destructuring where the pattern is expected to always match.
      */
     protected fun compileListPatternBindings(pattern: ListPattern, listSlot: Int, isMutable: Boolean = false) {
-        // Get size for rest patterns
+        // Find rest pattern position and count elements before/after
+        val restIndex = pattern.elements.indexOfFirst { it is RestPattern }
+        val hasRest = restIndex >= 0
+        val beforeRestCount = if (hasRest) restIndex else pattern.elements.size
+        val afterRestCount = if (hasRest) pattern.elements.size - restIndex - 1 else 0
+
+        // Get size for rest patterns and elements after rest
         mv.visitVarInsn(ALOAD, listSlot)
         mv.visitMethodInsn(
             INVOKEVIRTUAL,
@@ -1388,68 +1428,97 @@ private open class ExpressionGenerator(
         val sizeSlot = allocateSlot()
         mv.visitVarInsn(ISTORE, sizeSlot)
 
-        var elementIndex = 0
-        for (element in pattern.elements) {
-            when (element) {
-                is RestPattern -> {
-                    // Capture remaining elements as a list
-                    if (element.name != null) {
-                        mv.visitVarInsn(ALOAD, listSlot)
-                        pushIntValue(elementIndex)
-                        mv.visitVarInsn(ILOAD, sizeSlot)
-                        mv.visitMethodInsn(
-                            INVOKEVIRTUAL,
-                            LIST_VALUE_TYPE,
-                            "slice",
-                            "(II)L${LIST_VALUE_TYPE};",
-                            false
-                        )
-                        val slot = allocateSlot()
-                        declareBinding(element.name, slot, isMutable)
-                        mv.visitVarInsn(ASTORE, slot)
-                    }
-                    break
-                }
-                is BindingPattern -> {
-                    // Get element at index and bind
-                    mv.visitVarInsn(ALOAD, listSlot)
-                    pushIntValue(elementIndex)
-                    mv.visitMethodInsn(
-                        INVOKEVIRTUAL,
-                        LIST_VALUE_TYPE,
-                        "get",
-                        "(I)L${VALUE_TYPE};",
-                        false
-                    )
-                    val slot = allocateSlot()
-                    declareBinding(element.name, slot, isMutable)
-                    mv.visitVarInsn(ASTORE, slot)
-                    elementIndex++
-                }
-                is WildcardPattern -> {
-                    elementIndex++
-                }
-                is ListPattern -> {
-                    // Nested list: get element, cast, and recursively bind
-                    mv.visitVarInsn(ALOAD, listSlot)
-                    pushIntValue(elementIndex)
-                    mv.visitMethodInsn(
-                        INVOKEVIRTUAL,
-                        LIST_VALUE_TYPE,
-                        "get",
-                        "(I)L${VALUE_TYPE};",
-                        false
-                    )
-                    mv.visitTypeInsn(CHECKCAST, LIST_VALUE_TYPE)
-                    val nestedSlot = allocateSlot()
-                    mv.visitVarInsn(ASTORE, nestedSlot)
-                    compileListPatternBindings(element, nestedSlot, isMutable)
-                    elementIndex++
-                }
-                is LiteralPattern, is RangePattern -> {
-                    // Skip literal/range patterns in binding context (no variable to bind)
-                    elementIndex++
-                }
+        // Process elements before rest pattern
+        for (i in 0 until beforeRestCount) {
+            val element = pattern.elements[i]
+            compileListPatternElementBinding(element, listSlot, sizeSlot, i, false, 0, isMutable)
+        }
+
+        // Process rest pattern if present
+        if (hasRest) {
+            val restPattern = pattern.elements[restIndex] as RestPattern
+            if (restPattern.name != null) {
+                // Capture elements from beforeRestCount to (size - afterRestCount)
+                mv.visitVarInsn(ALOAD, listSlot)
+                pushIntValue(beforeRestCount)
+                mv.visitVarInsn(ILOAD, sizeSlot)
+                pushIntValue(afterRestCount)
+                mv.visitInsn(ISUB)
+                mv.visitMethodInsn(
+                    INVOKEVIRTUAL,
+                    LIST_VALUE_TYPE,
+                    "slice",
+                    "(II)L${LIST_VALUE_TYPE};",
+                    false
+                )
+                val slot = allocateSlot()
+                declareBinding(restPattern.name, slot, isMutable)
+                mv.visitVarInsn(ASTORE, slot)
+            }
+
+            // Process elements after rest pattern (indexed from the end)
+            for (i in 0 until afterRestCount) {
+                val element = pattern.elements[restIndex + 1 + i]
+                val offsetFromEnd = afterRestCount - i
+                compileListPatternElementBinding(element, listSlot, sizeSlot, 0, true, offsetFromEnd, isMutable)
+            }
+        }
+    }
+
+    /**
+     * Compile binding for a single element in a list pattern (no failure checking).
+     * @param fromEnd if true, use (size - offsetFromEnd) as index; otherwise use constantIndex
+     */
+    private fun compileListPatternElementBinding(
+        element: Pattern,
+        listSlot: Int,
+        sizeSlot: Int,
+        constantIndex: Int,
+        fromEnd: Boolean,
+        offsetFromEnd: Int,
+        isMutable: Boolean
+    ) {
+        // Helper to load element at the appropriate index
+        fun loadElement() {
+            mv.visitVarInsn(ALOAD, listSlot)
+            if (fromEnd) {
+                mv.visitVarInsn(ILOAD, sizeSlot)
+                pushIntValue(offsetFromEnd)
+                mv.visitInsn(ISUB)
+            } else {
+                pushIntValue(constantIndex)
+            }
+            mv.visitMethodInsn(
+                INVOKEVIRTUAL,
+                LIST_VALUE_TYPE,
+                "get",
+                "(I)L${VALUE_TYPE};",
+                false
+            )
+        }
+
+        when (element) {
+            is RestPattern -> {
+                throw CodegenException("RestPattern should not be passed to compileListPatternElementBinding")
+            }
+            is BindingPattern -> {
+                loadElement()
+                val slot = allocateSlot()
+                declareBinding(element.name, slot, isMutable)
+                mv.visitVarInsn(ASTORE, slot)
+            }
+            is WildcardPattern -> {
+                // Nothing to do
+            }
+            is ListPattern -> {
+                loadElement()
+                mv.visitTypeInsn(CHECKCAST, LIST_VALUE_TYPE)
+                val nestedSlot = allocateSlot()
+                mv.visitVarInsn(ASTORE, nestedSlot)
+                compileListPatternBindings(element, nestedSlot, isMutable)
+            }
+            is LiteralPattern, is RangePattern -> {
+                // Skip - no variable to bind
             }
         }
     }
