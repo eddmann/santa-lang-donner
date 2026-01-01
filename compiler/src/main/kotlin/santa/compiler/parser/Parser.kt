@@ -478,26 +478,19 @@ class Parser(private val tokens: List<Token>) {
 
     private fun parsePostfix(expr: Expr): Expr {
         var current = expr
-        current = parseIndexing(current)
-        current = parseCalls(current)
-        return current
-    }
-
-    private fun parseIndexing(expr: Expr): Expr {
-        var current = expr
-        while (match(TokenType.LBRACKET)) {
-            val indexExpr = parseExpression(0)
-            skipLineBreaks()
-            val endToken = expect(TokenType.RBRACKET, "Expected ']' after index expression")
-            current = IndexExpr(current, indexExpr, spanFrom(current.span, endToken.span))
-        }
-        return current
-    }
-
-    private fun parseCalls(expr: Expr): Expr {
-        var current = expr
         while (true) {
+            // Check for indexing [expr]
+            if (match(TokenType.LBRACKET)) {
+                val indexExpr = parseExpression(0)
+                skipLineBreaks()
+                val endToken = expect(TokenType.RBRACKET, "Expected ']' after index expression")
+                current = IndexExpr(current, indexExpr, spanFrom(current.span, endToken.span))
+                continue
+            }
+
             skipLineBreaks()
+
+            // Check for function calls (args)
             if (match(TokenType.LPAREN)) {
                 val args = parseDelimitedElements(TokenType.RPAREN) { parseCallArgument() }
                 val endToken = expect(TokenType.RPAREN, "Expected ')' after arguments")
@@ -505,6 +498,7 @@ class Parser(private val tokens: List<Token>) {
                 continue
             }
 
+            // Check for trailing lambda |params| body
             if (check(TokenType.PIPE)) {
                 val lambda = parseFunctionLiteral(advance())
                 current = when (current) {
