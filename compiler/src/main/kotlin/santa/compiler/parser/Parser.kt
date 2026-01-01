@@ -643,15 +643,35 @@ class Parser(private val tokens: List<Token>) {
     private fun isBlockExpressionStart(): Boolean {
         var depth = 0
         var cursor = index
+        // Track if we've seen a non-whitespace token at depth 0 (to detect leading newlines)
+        var seenExpressionToken = false
         while (cursor < tokens.size) {
             val token = tokens[cursor]
             if (depth == 0) {
                 when (token.type) {
                     TokenType.RBRACE -> return false
-                    TokenType.SEMICOLON, TokenType.NEWLINE -> return true
+                    TokenType.SEMICOLON -> return true
+                    TokenType.NEWLINE -> {
+                        // Newline only indicates block if we've already started an expression
+                        // and the newline isn't followed by a comma (which would indicate set)
+                        if (seenExpressionToken) {
+                            // Look ahead to see if there's a comma before next meaningful token
+                            var lookAhead = cursor + 1
+                            while (lookAhead < tokens.size && tokens[lookAhead].type == TokenType.NEWLINE) {
+                                lookAhead++
+                            }
+                            if (lookAhead < tokens.size && tokens[lookAhead].type == TokenType.COMMA) {
+                                // It's a set with newline before comma
+                                cursor = lookAhead
+                                continue
+                            }
+                            return true
+                        }
+                        // Leading newlines - skip and continue looking
+                    }
                     TokenType.COMMA -> return false
                     TokenType.LET, TokenType.RETURN, TokenType.BREAK -> return true
-                    else -> {}
+                    else -> seenExpressionToken = true
                 }
             }
             when (token.type) {
