@@ -592,12 +592,14 @@ class CodegenTest {
         }
 
         @Test
-        fun `scan returns intermediate results`() {
+        fun `scan returns intermediate results including initial`() {
+            // Note: This includes initial value for AOC compatibility (deviates from LANG.txt)
             val result = eval("scan(0, |a, b| a + b, [1, 2, 3])") as ListValue
-            result.size() shouldBe 3
-            result.get(0) shouldBe IntValue(1)
-            result.get(1) shouldBe IntValue(3)
-            result.get(2) shouldBe IntValue(6)
+            result.size() shouldBe 4
+            result.get(0) shouldBe IntValue(0)  // Initial value
+            result.get(1) shouldBe IntValue(1)
+            result.get(2) shouldBe IntValue(3)
+            result.get(3) shouldBe IntValue(6)
         }
 
         @Test

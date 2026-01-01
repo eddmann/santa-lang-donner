@@ -1056,8 +1056,9 @@ object Builtins {
         }
         val results = mutableListOf<Value>()
         var acc = initial
-        // Include initial value in output - this matches the behavior needed for
-        // AOC-style code where cycles[cycle-1] needs the value at START of cycle
+        // Include initial value in output - this deviates from LANG.txt spec but matches
+        // the behavior needed by AOC solutions like Day 10 where cycles[cycle-1] expects
+        // the value at START of that cycle (i.e., the initial value at index 0).
         results.add(initial)
         try {
             for (elem in items) {

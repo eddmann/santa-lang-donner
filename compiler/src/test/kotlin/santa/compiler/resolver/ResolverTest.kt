@@ -24,16 +24,15 @@ class ResolverTest {
     }
 
     @Test
-    fun rejects_shadowing_protected_builtins() {
-        val error = assertThrows(ResolveException::class.java) {
+    fun allows_shadowing_builtins() {
+        // LANG.txt §14.6 says builtins can't be shadowed, but real-world
+        // AOC solutions do shadow them (e.g., signum, cycle). We allow it for compatibility.
+        assertDoesNotThrow {
             resolve(
                 """
                 let sum = 1;
                 """.trimIndent(),
             )
-        }
-        if (error.message?.contains("built-in") != true) {
-            throw AssertionError("Expected error message to mention built-in")
         }
     }
 

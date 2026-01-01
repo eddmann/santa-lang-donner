@@ -253,15 +253,17 @@ class ExampleProgramsTest {
         }
 
         @Test
-        fun `scan shows intermediate results`() {
+        fun `scan shows intermediate results including initial`() {
+            // Note: This includes initial value for AOC compatibility (deviates from LANG.txt)
             val result = eval("""
                 [1, 2, 3, 4] |> scan(0, |acc, x| acc + x)
             """.trimIndent()) as ListValue
-            result.size() shouldBe 4
-            result.get(0) shouldBe IntValue(1)   // 0+1
-            result.get(1) shouldBe IntValue(3)   // 1+2
-            result.get(2) shouldBe IntValue(6)   // 3+3
-            result.get(3) shouldBe IntValue(10)  // 6+4
+            result.size() shouldBe 5
+            result.get(0) shouldBe IntValue(0)   // Initial
+            result.get(1) shouldBe IntValue(1)   // 0+1
+            result.get(2) shouldBe IntValue(3)   // 1+2
+            result.get(3) shouldBe IntValue(6)   // 3+3
+            result.get(4) shouldBe IntValue(10)  // 6+4
         }
     }
 
