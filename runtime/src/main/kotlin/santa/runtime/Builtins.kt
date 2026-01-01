@@ -152,6 +152,83 @@ object Builtins {
     }
 
     /**
+     * evaluate(string) - Parse a JSON-like literal string into a value.
+     * Supports integers and nested lists: "42" -> 42, "[1,[2,3]]" -> [1,[2,3]]
+     */
+    @JvmStatic
+    fun evaluate(value: Value): Value = when (value) {
+        is StringValue -> parseValue(value.value.trim())
+        else -> throw SantaRuntimeException("evaluate: expected String, got ${value.typeName()}")
+    }
+
+    private fun parseValue(s: String): Value {
+        if (s.isEmpty()) {
+            throw SantaRuntimeException("evaluate: empty string")
+        }
+        return when {
+            s.startsWith("[") -> parseList(s)
+            s.all { it.isDigit() || (it == '-' && s.length > 1) } -> {
+                val num = s.toLongOrNull()
+                    ?: throw SantaRuntimeException("evaluate: invalid integer '$s'")
+                IntValue(num)
+            }
+            else -> throw SantaRuntimeException("evaluate: unsupported value '$s'")
+        }
+    }
+
+    private fun parseList(s: String): ListValue {
+        if (!s.startsWith("[") || !s.endsWith("]")) {
+            throw SantaRuntimeException("evaluate: invalid list syntax '$s'")
+        }
+        val inner = s.substring(1, s.length - 1)
+        if (inner.isEmpty()) {
+            return ListValue(persistentListOf())
+        }
+
+        val elements = mutableListOf<Value>()
+        var i = 0
+        while (i < inner.length) {
+            // Skip whitespace and commas
+            while (i < inner.length && (inner[i] == ',' || inner[i] == ' ')) {
+                i++
+            }
+            if (i >= inner.length) break
+
+            if (inner[i] == '[') {
+                // Find matching bracket
+                var depth = 0
+                val start = i
+                while (i < inner.length) {
+                    when (inner[i]) {
+                        '[' -> depth++
+                        ']' -> {
+                            depth--
+                            if (depth == 0) {
+                                i++
+                                break
+                            }
+                        }
+                    }
+                    i++
+                }
+                elements.add(parseList(inner.substring(start, i)))
+            } else {
+                // Parse integer
+                val start = i
+                if (inner[i] == '-') i++
+                while (i < inner.length && inner[i].isDigit()) {
+                    i++
+                }
+                val numStr = inner.substring(start, i)
+                val num = numStr.toLongOrNull()
+                    ?: throw SantaRuntimeException("evaluate: invalid integer '$numStr'")
+                elements.add(IntValue(num))
+            }
+        }
+        return ListValue(elements.toPersistentList())
+    }
+
+    /**
      * list(value) - Convert to List representation.
      */
     @JvmStatic
@@ -1908,6 +1985,7 @@ object Builtins {
         "list" to BuiltinInfo(1, Builtins::list),
         "set" to BuiltinInfo(1, Builtins::set),
         "dict" to BuiltinInfo(1, Builtins::dict),
+        "evaluate" to BuiltinInfo(1, Builtins::evaluate),
         // Collection access
         "get" to BuiltinInfo(2, Builtins::get),
         "second" to BuiltinInfo(1, Builtins::second),
@@ -2066,6 +2144,7 @@ class BuiltinFunctionValue(val name: String) : FunctionValue(
             "bit_not" -> Builtins.bit_not(args[0])
             "id" -> Builtins.id(args[0])
             "memoize" -> Builtins.memoize(args[0])
+            "evaluate" -> Builtins.evaluate(args[0])
 
             // 2-arity functions
             "push" -> Builtins.push(args[0], args[1])
