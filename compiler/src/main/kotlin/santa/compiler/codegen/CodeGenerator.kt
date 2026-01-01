@@ -2007,10 +2007,13 @@ private open class ExpressionGenerator(
     }
 
     private fun compileCall(expr: CallExpr) {
-        // Check if it's a call to a built-in function
+        // Check if it's a call to a built-in function (but not if shadowed by local binding)
         val callee = expr.callee
-        if (callee is IdentifierExpr && callee.name in BUILTIN_FUNCTIONS) {
-            compileBuiltinCall(callee.name, expr.arguments)
+        val isBuiltinCall = callee is IdentifierExpr &&
+            callee.name in BUILTIN_FUNCTIONS &&
+            lookupBinding(callee.name) == null  // Not shadowed by local
+        if (isBuiltinCall) {
+            compileBuiltinCall((callee as IdentifierExpr).name, expr.arguments)
         } else {
             // General function call - evaluate callee (should be FunctionValue)
             compileExpr(callee)
@@ -2108,8 +2111,9 @@ private open class ExpressionGenerator(
         val functionName = expr.functionName
         val arguments = listOf(ExprArgument(expr.left), ExprArgument(expr.right))
 
-        // Check if it's a builtin function
-        if (functionName in BUILTIN_FUNCTIONS) {
+        // Check if it's a builtin function (but not if shadowed by local binding)
+        val isBuiltinCall = functionName in BUILTIN_FUNCTIONS && lookupBinding(functionName) == null
+        if (isBuiltinCall) {
             compileBuiltinCall(functionName, arguments)
         } else {
             // User-defined function - look up by name and call
