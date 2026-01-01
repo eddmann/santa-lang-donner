@@ -95,6 +95,15 @@ data class PlaceholderExpr(
     override val span: Span,
 ) : Expr
 
+/**
+ * Operator used as a function value (e.g., `sort(<)` or `reduce(+)`).
+ * Desugared to a lambda: `<` → `|a, b| a < b`
+ */
+data class OperatorExpr(
+    val operator: String,
+    override val span: Span,
+) : Expr
+
 data class ListLiteralExpr(
     val elements: List<CollectionElement>,
     override val span: Span,

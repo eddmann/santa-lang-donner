@@ -1220,6 +1220,22 @@ object Builtins {
     }
 
     /**
+     * max(a, b) - Find maximum of two values.
+     */
+    @JvmStatic
+    fun max(a: Value, b: Value): Value {
+        return if (Operators.compare(a, b) >= 0) a else b
+    }
+
+    /**
+     * max(a, b, c) - Find maximum of three values.
+     */
+    @JvmStatic
+    fun max(a: Value, b: Value, c: Value): Value {
+        return max(max(a, b), c)
+    }
+
+    /**
      * min(..values) - Find minimum. Can be called with multiple args or single collection.
      */
     @JvmStatic
@@ -1233,6 +1249,22 @@ object Builtins {
         }
         if (items.isEmpty()) return NilValue
         return items.minWithOrNull { a, b -> Operators.compare(a, b) } ?: NilValue
+    }
+
+    /**
+     * min(a, b) - Find minimum of two values.
+     */
+    @JvmStatic
+    fun min(a: Value, b: Value): Value {
+        return if (Operators.compare(a, b) <= 0) a else b
+    }
+
+    /**
+     * min(a, b, c) - Find minimum of three values.
+     */
+    @JvmStatic
+    fun min(a: Value, b: Value, c: Value): Value {
+        return min(min(a, b), c)
     }
 
     // =========================================================================
@@ -1338,15 +1370,36 @@ object Builtins {
     @JvmStatic
     fun chunk(chunkSize: Value, collection: Value): Value {
         if (chunkSize !is IntValue) throw SantaRuntimeException("chunk: first argument must be Integer")
-        if (collection !is ListValue) throw SantaRuntimeException("chunk: expected List, got ${collection.typeName()}")
 
         val size = chunkSize.value.toInt()
         if (size <= 0) throw SantaRuntimeException("chunk: size must be positive")
 
-        val chunks = collection.elements.chunked(size) { chunk ->
-            ListValue(chunk.toPersistentList()) as Value
+        return when (collection) {
+            is ListValue -> {
+                val chunks = collection.elements.chunked(size) { chunk ->
+                    ListValue(chunk.toPersistentList()) as Value
+                }
+                ListValue(chunks.toPersistentList())
+            }
+            is StringValue -> {
+                // Chunk by grapheme clusters
+                val graphemes = mutableListOf<String>()
+                val iter = com.ibm.icu.text.BreakIterator.getCharacterInstance()
+                iter.setText(collection.value)
+                var start = 0
+                var end = iter.next()
+                while (end != com.ibm.icu.text.BreakIterator.DONE) {
+                    graphemes.add(collection.value.substring(start, end))
+                    start = end
+                    end = iter.next()
+                }
+                val chunks = graphemes.chunked(size) { chunk ->
+                    StringValue(chunk.joinToString("")) as Value
+                }
+                ListValue(chunks.toPersistentList())
+            }
+            else -> throw SantaRuntimeException("chunk: expected List or String, got ${collection.typeName()}")
         }
-        return ListValue(chunks.toPersistentList())
     }
 
     // =========================================================================
@@ -1533,6 +1586,22 @@ object Builtins {
     fun zip(collection: Value): Value = when (collection) {
         is ListValue -> LazySequenceValue.zip(collection.elements.toList())
         else -> LazySequenceValue.zip(listOf(collection))
+    }
+
+    /**
+     * zip(collection1, collection2) - Aggregate two collections into tuples.
+     */
+    @JvmStatic
+    fun zip(collection1: Value, collection2: Value): Value {
+        return LazySequenceValue.zip(listOf(collection1, collection2))
+    }
+
+    /**
+     * zip(collection1, collection2, collection3) - Aggregate three collections into tuples.
+     */
+    @JvmStatic
+    fun zip(collection1: Value, collection2: Value, collection3: Value): Value {
+        return LazySequenceValue.zip(listOf(collection1, collection2, collection3))
     }
 
     /**
@@ -1838,8 +1907,8 @@ object Builtins {
         "count" to BuiltinInfo(2, Builtins::count),
         // Aggregation
         "sum" to BuiltinInfo(1, Builtins::sum),
-        "max" to BuiltinInfo(1, Builtins::max),
-        "min" to BuiltinInfo(1, Builtins::min),
+        "max" to BuiltinInfo(1, { v: Value -> max(v) }),
+        "min" to BuiltinInfo(1, { v: Value -> min(v) }),
         // Sequence manipulation
         "skip" to BuiltinInfo(2, Builtins::skip),
         "take" to BuiltinInfo(2, Builtins::take),
@@ -1859,7 +1928,7 @@ object Builtins {
         "repeat" to BuiltinInfo(1, Builtins::repeat),
         "cycle" to BuiltinInfo(1, Builtins::cycle),
         "iterate" to BuiltinInfo(2, Builtins::iterate),
-        "zip" to BuiltinInfo(1, Builtins::zip),
+        "zip" to BuiltinInfo(1, { v: Value -> zip(v) }),
         "combinations" to BuiltinInfo(2, Builtins::combinations),
         "range" to BuiltinInfo(3, Builtins::range),
         // String functions
@@ -1946,8 +2015,18 @@ class BuiltinFunctionValue(val name: String) : FunctionValue(
             "second" -> Builtins.second(args[0])
             "last" -> Builtins.last(args[0])
             "sum" -> Builtins.sum(args[0])
-            "max" -> Builtins.max(args[0])
-            "min" -> Builtins.min(args[0])
+            "max" -> when (args.size) {
+                1 -> Builtins.max(args[0])
+                2 -> Builtins.max(args[0], args[1])
+                3 -> Builtins.max(args[0], args[1], args[2])
+                else -> throw SantaRuntimeException("max: expected 1-3 arguments, got ${args.size}")
+            }
+            "min" -> when (args.size) {
+                1 -> Builtins.min(args[0])
+                2 -> Builtins.min(args[0], args[1])
+                3 -> Builtins.min(args[0], args[1], args[2])
+                else -> throw SantaRuntimeException("min: expected 1-3 arguments, got ${args.size}")
+            }
             "reverse" -> Builtins.reverse(args[0])
             "union" -> Builtins.union(args[0])
             "intersection" -> Builtins.intersection(args[0])
@@ -1984,7 +2063,16 @@ class BuiltinFunctionValue(val name: String) : FunctionValue(
             "any?" -> Builtins.`any?`(args[0], args[1])
             "all?" -> Builtins.`all?`(args[0], args[1])
             "iterate" -> Builtins.iterate(args[0], args[1])
-            "zip" -> Builtins.zip(args[0])  // Actually 1-arity, takes list of collections
+            "zip" -> when (args.size) {
+                1 -> Builtins.zip(args[0])
+                2 -> Builtins.zip(args[0], args[1])
+                3 -> Builtins.zip(args[0], args[1], args[2])
+                else -> {
+                    // For more than 3 args, create a list and call the 1-arg version
+                    val listOfCollections = ListValue(args.toPersistentList())
+                    LazySequenceValue.zip(args.toList())
+                }
+            }
             "combinations" -> Builtins.combinations(args[0], args[1])
             "split" -> Builtins.split(args[0], args[1])
             "join" -> Builtins.join(args[0], args[1])

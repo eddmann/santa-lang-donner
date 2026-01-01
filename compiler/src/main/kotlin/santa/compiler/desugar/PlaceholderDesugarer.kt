@@ -37,6 +37,11 @@ object PlaceholderDesugarer {
     }
 
     private fun desugarExpr(expr: Expr): Expr {
+        // Handle operator expressions (e.g., `<` → `|$0, $1| $0 < $1`)
+        if (expr is OperatorExpr) {
+            return desugarOperator(expr)
+        }
+
         // First check if this expression contains placeholders at the top level
         // If so, wrap it in a lambda
         val placeholderCount = countPlaceholders(expr)
@@ -49,6 +54,37 @@ object PlaceholderDesugarer {
     }
 
     /**
+     * Desugar an operator expression to a lambda.
+     * E.g., `<` → `|$0, $1| $0 < $1`
+     */
+    private fun desugarOperator(expr: OperatorExpr): Expr {
+        val params = listOf(NamedParam("\$0"), NamedParam("\$1"))
+        val binaryOp = operatorToBinaryOperator(expr.operator)
+        val body = BinaryExpr(
+            operator = binaryOp,
+            left = IdentifierExpr("\$0", expr.span),
+            right = IdentifierExpr("\$1", expr.span),
+            span = expr.span
+        )
+        return FunctionExpr(params = params, body = body, span = expr.span)
+    }
+
+    private fun operatorToBinaryOperator(op: String): BinaryOperator = when (op) {
+        "+" -> BinaryOperator.PLUS
+        "-" -> BinaryOperator.MINUS
+        "*" -> BinaryOperator.MULTIPLY
+        "/" -> BinaryOperator.DIVIDE
+        "%" -> BinaryOperator.MODULO
+        "<" -> BinaryOperator.LESS
+        ">" -> BinaryOperator.GREATER
+        "<=" -> BinaryOperator.LESS_EQUAL
+        ">=" -> BinaryOperator.GREATER_EQUAL
+        "==" -> BinaryOperator.EQUAL
+        "!=" -> BinaryOperator.NOT_EQUAL
+        else -> throw IllegalArgumentException("Unknown operator: $op")
+    }
+
+    /**
      * Wrap an expression containing placeholders in a lambda.
      * Each placeholder becomes a parameter.
      */
@@ -56,9 +92,11 @@ object PlaceholderDesugarer {
         val params = (0 until placeholderCount).map { NamedParam("\$${it}") }
         var paramIndex = 0
         val body = replacePlaceholders(expr) { paramIndex++ }
+        // After replacing placeholders, desugar any nested expressions in the body
+        val desugaredBody = desugarNested(body)
         return FunctionExpr(
             params = params,
-            body = body,
+            body = desugaredBody,
             span = expr.span
         )
     }
@@ -100,16 +138,23 @@ object PlaceholderDesugarer {
      * Count placeholders in an expression (non-recursively into nested lambdas/blocks/calls).
      * Only counts placeholders that would be captured by wrapping this expression.
      *
-     * Call arguments are treated as separate scope boundaries - placeholders
-     * inside arguments should create lambdas at the argument level, not at
-     * the call expression level.
+     * For call arguments:
+     * - Bare placeholders (`_`) count toward partial application of the call
+     * - Expressions containing placeholders (`_ + 1`) create their own lambdas
      */
     private fun countPlaceholders(expr: Expr): Int = when (expr) {
         is PlaceholderExpr -> 1
-        is BinaryExpr -> countPlaceholders(expr.left) + countPlaceholders(expr.right)
+        is BinaryExpr -> {
+            // Compose and pipeline operators are placeholder scope boundaries
+            // Each side gets its own lambda independently
+            when (expr.operator) {
+                BinaryOperator.COMPOSE, BinaryOperator.PIPELINE -> 0
+                else -> countPlaceholders(expr.left) + countPlaceholders(expr.right)
+            }
+        }
         is UnaryExpr -> countPlaceholders(expr.expr)
-        // Don't count placeholders inside call arguments - they'll be desugared separately
-        is CallExpr -> countPlaceholders(expr.callee)
+        // Count bare placeholders in call arguments, but not placeholders inside expressions
+        is CallExpr -> countPlaceholders(expr.callee) + countPlaceholdersInCallArgs(expr.arguments)
         is IndexExpr -> countPlaceholders(expr.target) + countPlaceholders(expr.index)
         // Don't look inside functions, blocks, if, match - they have their own scope
         is FunctionExpr, is BlockExpr, is IfExpr, is MatchExpr -> 0
@@ -118,11 +163,26 @@ object PlaceholderDesugarer {
     }
 
     /**
+     * Count only bare placeholders in call arguments (not placeholders inside expressions).
+     * Bare placeholders create partial application of the call.
+     * Expressions containing placeholders create their own lambdas at the argument level.
+     */
+    private fun countPlaceholdersInCallArgs(arguments: List<CallArgument>): Int {
+        return arguments.count { arg ->
+            when (arg) {
+                is ExprArgument -> arg.expr is PlaceholderExpr
+                is SpreadArgument -> arg.expr is PlaceholderExpr
+            }
+        }
+    }
+
+    /**
      * Recursively desugar nested expressions (ones that don't directly contain placeholders).
      */
     private fun desugarNested(expr: Expr): Expr = when (expr) {
         is IntLiteralExpr, is DecimalLiteralExpr, is StringLiteralExpr,
-        is BoolLiteralExpr, is NilLiteralExpr, is IdentifierExpr, is PlaceholderExpr -> expr
+        is BoolLiteralExpr, is NilLiteralExpr, is IdentifierExpr, is PlaceholderExpr,
+        is OperatorExpr -> expr  // OperatorExpr should have been desugared already
 
         is UnaryExpr -> expr.copy(expr = desugarExpr(expr.expr))
 

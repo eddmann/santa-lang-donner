@@ -119,7 +119,7 @@ object TailCallAnalyzer {
                 // Terminals
                 is IntLiteralExpr, is DecimalLiteralExpr, is StringLiteralExpr,
                 is BoolLiteralExpr, is NilLiteralExpr, is IdentifierExpr,
-                is PlaceholderExpr, is TestBlockExpr, is InfixCallExpr -> {}
+                is PlaceholderExpr, is OperatorExpr, is TestBlockExpr, is InfixCallExpr -> {}
             }
         }
 

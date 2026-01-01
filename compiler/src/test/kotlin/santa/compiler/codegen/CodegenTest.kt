@@ -1813,4 +1813,43 @@ class CodegenTest {
             result shouldBe NilValue
         }
     }
+
+    @Nested
+    inner class OperatorAsFunction {
+        @Test
+        fun `less than operator as sort comparator`() {
+            val result = eval("[3, 1, 2] |> sort(<)") as ListValue
+            result.get(0) shouldBe IntValue(3)
+            result.get(1) shouldBe IntValue(2)
+            result.get(2) shouldBe IntValue(1)
+        }
+
+        @Test
+        fun `greater than operator as sort comparator`() {
+            val result = eval("[3, 1, 2] |> sort(>)") as ListValue
+            result.get(0) shouldBe IntValue(1)
+            result.get(1) shouldBe IntValue(2)
+            result.get(2) shouldBe IntValue(3)
+        }
+
+        @Test
+        fun `plus operator with reduce`() {
+            val result = eval("[1, 2, 3, 4] |> reduce(+)")
+            result shouldBe IntValue(10)
+        }
+
+        @Test
+        fun `multiply operator with reduce`() {
+            val result = eval("[1, 2, 3, 4] |> reduce(*)")
+            result shouldBe IntValue(24)
+        }
+
+        @Test
+        fun `comparison operators`() {
+            eval("[1, 2] |> reduce(<)") shouldBe BoolValue(true)
+            eval("[2, 1] |> reduce(<)") shouldBe BoolValue(false)
+            eval("[1, 1] |> reduce(==)") shouldBe BoolValue(true)
+            eval("[1, 2] |> reduce(!=)") shouldBe BoolValue(true)
+        }
+    }
 }

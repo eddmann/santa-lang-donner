@@ -9,6 +9,7 @@ object ExprRenderer {
         is NilLiteralExpr -> "nil"
         is IdentifierExpr -> expr.name
         is PlaceholderExpr -> "_"
+        is OperatorExpr -> "(op ${expr.operator})"
         is ListLiteralExpr -> renderCollection("[", "]", expr.elements)
         is SetLiteralExpr -> renderCollection("{", "}", expr.elements)
         is DictLiteralExpr -> renderDict(expr)

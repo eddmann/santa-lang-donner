@@ -378,6 +378,9 @@ private open class ExpressionGenerator(
             is PlaceholderExpr -> throw IllegalStateException(
                 "PlaceholderExpr should have been desugared before codegen"
             )
+            is OperatorExpr -> throw IllegalStateException(
+                "OperatorExpr should have been desugared before codegen"
+            )
             is ListLiteralExpr -> compileListLiteral(expr)
             is SetLiteralExpr -> compileSetLiteral(expr)
             is DictLiteralExpr -> compileDictLiteral(expr)
@@ -1561,7 +1564,7 @@ private open class ExpressionGenerator(
                 }
                 // Terminals that don't contain expressions
                 is IntLiteralExpr, is DecimalLiteralExpr, is StringLiteralExpr,
-                is BoolLiteralExpr, is NilLiteralExpr, is PlaceholderExpr -> { }
+                is BoolLiteralExpr, is NilLiteralExpr, is PlaceholderExpr, is OperatorExpr -> { }
                 is SetLiteralExpr, is DictLiteralExpr, is RangeExpr, is InfixCallExpr -> { }
                 is ReturnExpr -> e.value?.let { visit(it, bound) }
                 is BreakExpr -> e.value?.let { visit(it, bound) }
@@ -1707,6 +1710,13 @@ private open class ExpressionGenerator(
     }
 
     private fun compileBuiltinCall(name: String, arguments: List<CallArgument>) {
+        // If there are spread arguments, fall back to general function call mechanism
+        // which handles spreads properly via BuiltinFunctionValue.invoke
+        if (arguments.any { it is SpreadArgument }) {
+            compileBuiltinCallWithSpreads(name, arguments)
+            return
+        }
+
         val plainArgs = arguments.filterIsInstance<ExprArgument>()
         val expectedArity = BUILTIN_ARITIES[name] ?: throw CodegenException("Unknown builtin: $name")
 
@@ -1786,6 +1796,72 @@ private open class ExpressionGenerator(
             BUILTINS_TYPE,
             name,
             descriptor,
+            false
+        )
+    }
+
+    /**
+     * Handle builtin calls with spread arguments by pushing a BuiltinFunctionValue
+     * and calling it with a dynamically constructed argument list.
+     */
+    private fun compileBuiltinCallWithSpreads(name: String, arguments: List<CallArgument>) {
+        // Push BuiltinFunctionValue for the builtin
+        mv.visitTypeInsn(NEW, "santa/runtime/BuiltinFunctionValue")
+        mv.visitInsn(DUP)
+        mv.visitLdcInsn(name)
+        mv.visitMethodInsn(
+            INVOKESPECIAL,
+            "santa/runtime/BuiltinFunctionValue",
+            "<init>",
+            "(Ljava/lang/String;)V",
+            false
+        )
+
+        // Build argument list dynamically using ArrayList
+        mv.visitTypeInsn(NEW, "java/util/ArrayList")
+        mv.visitInsn(DUP)
+        mv.visitMethodInsn(
+            INVOKESPECIAL,
+            "java/util/ArrayList",
+            "<init>",
+            "()V",
+            false
+        )
+
+        for (arg in arguments) {
+            when (arg) {
+                is ExprArgument -> {
+                    mv.visitInsn(DUP)
+                    compileExpr(arg.expr)
+                    mv.visitMethodInsn(
+                        INVOKEVIRTUAL,
+                        "java/util/ArrayList",
+                        "add",
+                        "(Ljava/lang/Object;)Z",
+                        false
+                    )
+                    mv.visitInsn(POP) // pop the boolean result
+                }
+                is SpreadArgument -> {
+                    mv.visitInsn(DUP)
+                    compileExpr(arg.expr)
+                    mv.visitMethodInsn(
+                        INVOKESTATIC,
+                        OPERATORS_TYPE,
+                        "spreadIntoJavaList",
+                        "(Ljava/util/ArrayList;L${VALUE_TYPE};)V",
+                        false
+                    )
+                }
+            }
+        }
+
+        // Call FunctionValue.invoke(List<Value>)
+        mv.visitMethodInsn(
+            INVOKEVIRTUAL,
+            FUNCTION_VALUE_TYPE,
+            "invoke",
+            "(Ljava/util/List;)L${VALUE_TYPE};",
             false
         )
     }

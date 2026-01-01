@@ -36,7 +36,8 @@ object PatternParamDesugarer {
 
     private fun desugarExpr(expr: Expr): Expr = when (expr) {
         is IntLiteralExpr, is DecimalLiteralExpr, is StringLiteralExpr,
-        is BoolLiteralExpr, is NilLiteralExpr, is IdentifierExpr, is PlaceholderExpr -> expr
+        is BoolLiteralExpr, is NilLiteralExpr, is IdentifierExpr, is PlaceholderExpr,
+        is OperatorExpr -> expr
 
         is UnaryExpr -> expr.copy(expr = desugarExpr(expr.expr))
 

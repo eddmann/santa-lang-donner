@@ -56,6 +56,7 @@ class Resolver(
             is NilLiteralExpr -> {}
             is IdentifierExpr -> resolveIdentifier(expr)
             is PlaceholderExpr -> {}
+            is OperatorExpr -> {}  // No resolution needed - will be desugared
             is ListLiteralExpr -> expr.elements.forEach { resolveExpr(it.expr) }
             is SetLiteralExpr -> expr.elements.forEach { resolveExpr(it.expr) }
             is DictLiteralExpr -> expr.entries.forEach { resolveDictEntry(it) }

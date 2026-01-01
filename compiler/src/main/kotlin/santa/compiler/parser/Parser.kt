@@ -223,6 +223,10 @@ class Parser(private val tokens: List<Token>) {
             TokenType.BREAK -> parseBreakAfterToken(token)
             TokenType.IF -> parseIfExpression(token)
             TokenType.MATCH -> parseMatchExpression(token)
+            // Operators as function values (e.g., sort(<), reduce(+))
+            TokenType.PLUS, TokenType.MINUS, TokenType.STAR, TokenType.SLASH, TokenType.PERCENT,
+            TokenType.LESS, TokenType.GREATER, TokenType.LESS_EQUAL, TokenType.GREATER_EQUAL,
+            TokenType.EQUAL_EQUAL, TokenType.BANG_EQUAL -> OperatorExpr(token.lexeme, token.span)
             else -> throw error(token, "Expected expression")
         }
     }
@@ -644,7 +648,7 @@ class Parser(private val tokens: List<Token>) {
             if (depth == 0) {
                 when (token.type) {
                     TokenType.RBRACE -> return false
-                    TokenType.SEMICOLON -> return true
+                    TokenType.SEMICOLON, TokenType.NEWLINE -> return true
                     TokenType.COMMA -> return false
                     TokenType.LET, TokenType.RETURN, TokenType.BREAK -> return true
                     else -> {}
@@ -713,6 +717,7 @@ class Parser(private val tokens: List<Token>) {
         is NilLiteralExpr -> copy(span = span)
         is IdentifierExpr -> copy(span = span)
         is PlaceholderExpr -> copy(span = span)
+        is OperatorExpr -> copy(span = span)
         is ListLiteralExpr -> copy(span = span)
         is SetLiteralExpr -> copy(span = span)
         is DictLiteralExpr -> copy(span = span)
