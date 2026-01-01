@@ -1502,10 +1502,6 @@ private open class ExpressionGenerator(
                 is UnaryExpr -> visit(e.expr, bound)
                 is LetExpr -> {
                     visit(e.value, bound)
-                    val newBound = when (val p = e.pattern) {
-                        is BindingPattern -> bound + p.name
-                        else -> bound
-                    }
                     // Let doesn't have a continuation expression in AST, handled by block
                 }
                 is BlockExpr -> {
@@ -1515,10 +1511,7 @@ private open class ExpressionGenerator(
                             is ExprStatement -> visit(stmt.expr, currentBound)
                             is LetExpr -> {
                                 visit(stmt.value, currentBound)
-                                val p = stmt.pattern
-                                if (p is BindingPattern) {
-                                    currentBound = currentBound + p.name
-                                }
+                                currentBound = currentBound + collectPatternBindings(stmt.pattern)
                             }
                             is ReturnExpr -> stmt.value?.let { visit(it, currentBound) }
                             is BreakExpr -> stmt.value?.let { visit(it, currentBound) }
@@ -1532,14 +1525,17 @@ private open class ExpressionGenerator(
                     }
                 }
                 is IfExpr -> {
-                    when (val cond = e.condition) {
-                        is ExprCondition -> visit(cond.expr, bound)
+                    val thenBound = when (val cond = e.condition) {
+                        is ExprCondition -> {
+                            visit(cond.expr, bound)
+                            bound
+                        }
                         is LetCondition -> {
                             visit(cond.value, bound)
-                            // Let binding in condition binds in then branch
+                            bound + collectPatternBindings(cond.pattern)
                         }
                     }
-                    visit(e.thenBranch, bound)
+                    visit(e.thenBranch, thenBound)
                     e.elseBranch?.let { visit(it, bound) }
                 }
                 is MatchExpr -> {
@@ -1562,10 +1558,33 @@ private open class ExpressionGenerator(
                         is SpreadElement -> visit(elem.expr, bound)
                     }
                 }
+                is SetLiteralExpr -> e.elements.forEach { elem ->
+                    when (elem) {
+                        is ExprElement -> visit(elem.expr, bound)
+                        is SpreadElement -> visit(elem.expr, bound)
+                    }
+                }
+                is DictLiteralExpr -> e.entries.forEach { entry ->
+                    when (entry) {
+                        is KeyValueEntry -> {
+                            visit(entry.key, bound)
+                            visit(entry.value, bound)
+                        }
+                        is ShorthandEntry -> {
+                            if (entry.name !in bound && entry.name !in BUILTIN_FUNCTIONS) {
+                                freeVars.add(entry.name)
+                            }
+                        }
+                    }
+                }
+                is RangeExpr -> {
+                    visit(e.start, bound)
+                    e.end?.let { visit(it, bound) }
+                }
                 // Terminals that don't contain expressions
                 is IntLiteralExpr, is DecimalLiteralExpr, is StringLiteralExpr,
                 is BoolLiteralExpr, is NilLiteralExpr, is PlaceholderExpr, is OperatorExpr -> { }
-                is SetLiteralExpr, is DictLiteralExpr, is RangeExpr, is InfixCallExpr -> { }
+                is InfixCallExpr -> { }
                 is ReturnExpr -> e.value?.let { visit(it, bound) }
                 is BreakExpr -> e.value?.let { visit(it, bound) }
                 is TestBlockExpr -> {
