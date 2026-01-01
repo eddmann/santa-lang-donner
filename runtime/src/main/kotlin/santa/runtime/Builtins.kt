@@ -56,12 +56,13 @@ object Builtins {
     }
 
     /**
-     * push(collection, value) - Returns a new collection with value appended.
+     * push(value, collection) - Returns a new collection with value appended.
      */
     @JvmStatic
-    fun push(collection: Value, value: Value): Value = when (collection) {
+    fun push(value: Value, collection: Value): Value = when (collection) {
         is ListValue -> ListValue(collection.elements.add(value))
-        else -> throw SantaRuntimeException("push: expected List, got ${collection.typeName()}")
+        is SetValue -> SetValue(collection.elements.add(value))
+        else -> throw SantaRuntimeException("push: expected List or Set, got ${collection.typeName()}")
     }
 
     /**

@@ -443,7 +443,7 @@ class CodegenTest {
 
         @Test
         fun `push to list`() {
-            val result = eval("push([1, 2], 3)") as ListValue
+            val result = eval("push(3, [1, 2])") as ListValue
             result.size() shouldBe 3
             result.get(2) shouldBe IntValue(3)
         }

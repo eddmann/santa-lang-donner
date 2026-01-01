@@ -1208,7 +1208,7 @@ private open class ExpressionGenerator(
      * Bind pattern elements from a list without failure checking.
      * Used for let destructuring where the pattern is expected to always match.
      */
-    private fun compileListPatternBindings(pattern: ListPattern, listSlot: Int) {
+    protected fun compileListPatternBindings(pattern: ListPattern, listSlot: Int) {
         // Get size for rest patterns
         mv.visitVarInsn(ALOAD, listSlot)
         mv.visitMethodInsn(
@@ -1488,7 +1488,7 @@ private open class ExpressionGenerator(
      * Find free variables in an expression that are not bound by the given parameters.
      */
     private fun findFreeVariables(expr: Expr, params: List<Param>): Set<String> {
-        val paramNames = params.filterIsInstance<NamedParam>().map { it.name }.toSet()
+        val paramNames = collectParamBindings(params)
         val freeVars = mutableSetOf<String>()
 
         fun visit(e: Expr, bound: Set<String>) {
@@ -1551,7 +1551,7 @@ private open class ExpressionGenerator(
                     }
                 }
                 is FunctionExpr -> {
-                    val fnParams = e.params.filterIsInstance<NamedParam>().map { it.name }.toSet()
+                    val fnParams = collectParamBindings(e.params)
                     visit(e.body, bound + fnParams)
                 }
                 is IndexExpr -> { visit(e.target, bound); visit(e.index, bound) }
@@ -1585,6 +1585,17 @@ private open class ExpressionGenerator(
             is RestPattern -> if (pattern.name != null) setOf(pattern.name) else emptySet()
             is WildcardPattern, is LiteralPattern, is RangePattern -> emptySet()
         }
+    }
+
+    private fun collectParamBindings(params: List<Param>): Set<String> {
+        return params.flatMap { param ->
+            when (param) {
+                is NamedParam -> listOf(param.name)
+                is RestParam -> listOf(param.name)
+                is PatternParam -> collectPatternBindings(param.pattern).toList()
+                PlaceholderParam -> emptyList()
+            }
+        }.toSet()
     }
 
     /**
@@ -2038,66 +2049,122 @@ private open class LambdaExpressionGenerator(
         // Slot 0 is 'this', slot 1 is 'args' list
         nextSlot = 2
 
-        // Separate named params from rest param
-        val namedParams = params.filterIsInstance<NamedParam>()
-        val restParam = params.filterIsInstance<RestParam>().firstOrNull()
+        // Count non-rest params for rest param calculation
+        val nonRestParams = params.filter { it !is RestParam }
 
-        // Bind named parameters: extract from args list
-        for ((index, param) in namedParams.withIndex()) {
-            // args.get(index) -> store in local slot
-            mv.visitVarInsn(ALOAD, 1) // args
-            pushInt(mv, index)
-            mv.visitMethodInsn(
-                INVOKEINTERFACE,
-                "java/util/List",
-                "get",
-                "(I)Ljava/lang/Object;",
-                true
-            )
-            mv.visitTypeInsn(CHECKCAST, VALUE_TYPE)
-            val slot = nextSlot++
-            mv.visitVarInsn(ASTORE, slot)
-            declareBinding(param.name, slot, isMutable = false)
+        // Bind parameters in order, extracting from args list
+        var argIndex = 0
+        for (param in params) {
+            when (param) {
+                is NamedParam -> {
+                    // args.get(argIndex) -> store in local slot
+                    mv.visitVarInsn(ALOAD, 1) // args
+                    pushInt(mv, argIndex)
+                    mv.visitMethodInsn(
+                        INVOKEINTERFACE,
+                        "java/util/List",
+                        "get",
+                        "(I)Ljava/lang/Object;",
+                        true
+                    )
+                    mv.visitTypeInsn(CHECKCAST, VALUE_TYPE)
+                    val slot = nextSlot++
+                    mv.visitVarInsn(ASTORE, slot)
+                    declareBinding(param.name, slot, isMutable = false)
+                    argIndex++
+                }
+                is PatternParam -> {
+                    // Get value from args, cast to ListValue, and destructure
+                    mv.visitVarInsn(ALOAD, 1) // args
+                    pushInt(mv, argIndex)
+                    mv.visitMethodInsn(
+                        INVOKEINTERFACE,
+                        "java/util/List",
+                        "get",
+                        "(I)Ljava/lang/Object;",
+                        true
+                    )
+                    mv.visitTypeInsn(CHECKCAST, LIST_VALUE_TYPE)
+                    val listSlot = nextSlot++
+                    mv.visitVarInsn(ASTORE, listSlot)
+                    // Destructure using the pattern
+                    when (val pattern = param.pattern) {
+                        is ListPattern -> compileListPatternBindings(pattern, listSlot)
+                        else -> TODO("Pattern ${pattern::class.simpleName} not yet implemented in function params")
+                    }
+                    argIndex++
+                }
+                is RestParam -> {
+                    // Capture remaining arguments as a list
+                    mv.visitVarInsn(ALOAD, 1) // args
+                    pushInt(mv, nonRestParams.size)
+                    mv.visitVarInsn(ALOAD, 1) // args
+                    mv.visitMethodInsn(
+                        INVOKEINTERFACE,
+                        "java/util/List",
+                        "size",
+                        "()I",
+                        true
+                    )
+                    mv.visitMethodInsn(
+                        INVOKEINTERFACE,
+                        "java/util/List",
+                        "subList",
+                        "(II)Ljava/util/List;",
+                        true
+                    )
+                    // Convert java.util.List to ListValue
+                    mv.visitMethodInsn(
+                        INVOKESTATIC,
+                        "santa/runtime/Operators",
+                        "listFromJavaList",
+                        "(Ljava/util/List;)L${LIST_VALUE_TYPE};",
+                        false
+                    )
+                    val slot = nextSlot++
+                    mv.visitVarInsn(ASTORE, slot)
+                    declareBinding(param.name, slot, isMutable = false)
+                }
+                PlaceholderParam -> {
+                    // Skip placeholder params
+                    argIndex++
+                }
+            }
         }
 
-        // Bind rest parameter: extract remaining arguments as a list
-        if (restParam != null) {
-            // args.subList(namedParams.size, args.size())
-            mv.visitVarInsn(ALOAD, 1) // args
-            pushInt(mv, namedParams.size)
-            mv.visitVarInsn(ALOAD, 1) // args
-            mv.visitMethodInsn(
-                INVOKEINTERFACE,
-                "java/util/List",
-                "size",
-                "()I",
-                true
+        // Store captured values into local slots so nested lambdas can capture them.
+        // Without this, nested lambdas can't find captured variables via lookupBinding.
+        for (capture in captures) {
+            if (capture.isSelfRef) {
+                // Self-references are handled via the base class selfRef field
+                continue
+            }
+            // Load from this.fieldName
+            mv.visitVarInsn(ALOAD, 0) // this
+            mv.visitFieldInsn(
+                GETFIELD,
+                lambdaClassName,
+                capture.name,
+                "L${VALUE_TYPE};"
             )
-            mv.visitMethodInsn(
-                INVOKEINTERFACE,
-                "java/util/List",
-                "subList",
-                "(II)Ljava/util/List;",
-                true
-            )
-            // Convert java.util.List to ListValue
-            mv.visitMethodInsn(
-                INVOKESTATIC,
-                "santa/runtime/Operators",
-                "listFromJavaList",
-                "(Ljava/util/List;)L${LIST_VALUE_TYPE};",
-                false
-            )
+            // Store in local slot
             val slot = nextSlot++
             mv.visitVarInsn(ASTORE, slot)
-            declareBinding(restParam.name, slot, isMutable = false)
+            declareBinding(capture.name, slot, isMutable = false)
         }
     }
 
     override fun compileExpr(expr: Expr) {
         when (expr) {
             is IdentifierExpr -> {
-                // Check if it's a captured variable
+                // Check local bindings first (params, pattern bindings) - they shadow captures
+                val localBinding = lookupBinding(expr.name)
+                if (localBinding != null) {
+                    mv.visitVarInsn(ALOAD, localBinding.slot)
+                    return
+                }
+
+                // Then check captured variables
                 val capture = captures.find { it.name == expr.name }
                 if (capture != null) {
                     if (capture.isSelfRef) {
@@ -2120,7 +2187,7 @@ private open class LambdaExpressionGenerator(
                         )
                     }
                 } else {
-                    // Fall back to local variable lookup
+                    // Fall back to parent lookup (builtins)
                     super.compileExpr(expr)
                 }
             }
