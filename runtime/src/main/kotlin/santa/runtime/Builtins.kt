@@ -1572,6 +1572,26 @@ object Builtins {
         return SetValue(result.toPersistentSet())
     }
 
+    /**
+     * intersection(a, b) - Elements in both collections (2-arg overload).
+     */
+    @JvmStatic
+    fun intersection(a: Value, b: Value): Value {
+        val setA = when (a) {
+            is ListValue -> a.elements.toSet()
+            is SetValue -> a.elements.toSet()
+            is RangeValue -> a.asSequence().toSet()
+            else -> throw SantaRuntimeException("intersection: expected collection, got ${a.typeName()}")
+        }
+        val setB = when (b) {
+            is ListValue -> b.elements.toSet()
+            is SetValue -> b.elements.toSet()
+            is RangeValue -> b.asSequence().toSet()
+            else -> throw SantaRuntimeException("intersection: expected collection, got ${b.typeName()}")
+        }
+        return SetValue(setA.intersect(setB).toPersistentSet())
+    }
+
     // =========================================================================
     // Predicate Functions (LANG.txt §11.11)
     // =========================================================================
@@ -2022,7 +2042,7 @@ object Builtins {
         "chunk" to BuiltinInfo(2, Builtins::chunk),
         // Set operations
         "union" to BuiltinInfo(1, Builtins::union),
-        "intersection" to BuiltinInfo(1, Builtins::intersection),
+        "intersection" to BuiltinInfo(1, { v: Value -> intersection(v) }),
         // Predicates
         "includes?" to BuiltinInfo(2, Builtins::`includes?`),
         "excludes?" to BuiltinInfo(2, Builtins::`excludes?`),
@@ -2133,7 +2153,11 @@ class BuiltinFunctionValue(val name: String) : FunctionValue(
             }
             "reverse" -> Builtins.reverse(args[0])
             "union" -> Builtins.union(args[0])
-            "intersection" -> Builtins.intersection(args[0])
+            "intersection" -> when (args.size) {
+                1 -> Builtins.intersection(args[0])
+                2 -> Builtins.intersection(args[0], args[1])
+                else -> throw SantaRuntimeException("intersection: expected 1-2 arguments, got ${args.size}")
+            }
             "repeat" -> Builtins.repeat(args[0])
             "cycle" -> Builtins.cycle(args[0])
             "lines" -> Builtins.lines(args[0])
