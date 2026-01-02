@@ -1466,7 +1466,22 @@ object Builtins {
         val sorted = collection.elements.sortedWith { a, b ->
             val result = comparator.invoke(listOf(a, b))
             when (result) {
-                is BoolValue -> if (result.value) 1 else -1  // true = a comes after b
+                is BoolValue -> {
+                    // Boolean comparator: true means a > b (a comes after b)
+                    // To satisfy Java's comparator contract, we need to check both directions
+                    // for equality when the first comparison returns false
+                    if (result.value) {
+                        1  // a > b
+                    } else {
+                        // Check reverse: is b > a?
+                        val reverse = comparator.invoke(listOf(b, a))
+                        if (reverse is BoolValue && reverse.value) {
+                            -1  // b > a, so a < b
+                        } else {
+                            0  // neither a > b nor b > a, so a == b
+                        }
+                    }
+                }
                 is IntValue -> result.value.toInt()
                 else -> 0
             }
