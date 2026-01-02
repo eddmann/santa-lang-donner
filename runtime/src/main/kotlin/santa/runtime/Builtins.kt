@@ -926,7 +926,7 @@ object Builtins {
             is DictValue -> collection.entries.values.asSequence()
             is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
             is RangeValue -> collection.asSequence()
-            is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
+            is LazySequenceValue -> collection.asSequence()
             else -> throw SantaRuntimeException("flat_map: expected collection, got ${collection.typeName()}")
         }
         val result = items.flatMap { item ->
@@ -934,7 +934,7 @@ object Builtins {
             when (mapped) {
                 is ListValue -> mapped.elements.asSequence()
                 is SetValue -> mapped.elements.asSequence()
-                is LazySequenceValue -> mapped.take(Int.MAX_VALUE).asSequence()
+                is LazySequenceValue -> mapped.asSequence()
                 else -> sequenceOf(mapped)
             }
         }.toList()
@@ -1018,7 +1018,7 @@ object Builtins {
             }
             is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
             is RangeValue -> collection.asSequence()
-            is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
+            is LazySequenceValue -> collection.asSequence()
             else -> throw SantaRuntimeException("find_map: expected collection, got ${collection.typeName()}")
         }
         return items.firstNotNullOfOrNull { elem ->
@@ -1086,7 +1086,7 @@ object Builtins {
             }
             is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
             is RangeValue -> collection.asSequence()
-            is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
+            is LazySequenceValue -> collection.asSequence()
             else -> throw SantaRuntimeException("fold: expected collection, got ${collection.typeName()}")
         }
         var acc = initial
@@ -1120,7 +1120,7 @@ object Builtins {
             is DictValue -> collection.entries.values.asSequence()
             is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
             is RangeValue -> collection.asSequence()
-            is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
+            is LazySequenceValue -> collection.asSequence()
             else -> throw SantaRuntimeException("fold_s: expected collection, got ${collection.typeName()}")
         }
         var state: Value = initial
@@ -1222,7 +1222,7 @@ object Builtins {
             }
             is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
             is RangeValue -> collection.asSequence()
-            is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
+            is LazySequenceValue -> collection.asSequence()
             else -> throw SantaRuntimeException("each: expected collection, got ${collection.typeName()}")
         }
         try {
@@ -1264,7 +1264,7 @@ object Builtins {
             }
             is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
             is RangeValue -> collection.asSequence()
-            is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
+            is LazySequenceValue -> collection.asSequence()
             else -> throw SantaRuntimeException("find: expected collection, got ${collection.typeName()}")
         }
         return items.find { predicate.invoke(listOf(it)).isTruthy() } ?: NilValue
@@ -1314,7 +1314,7 @@ object Builtins {
             is SetValue -> collection.elements.toList()
             is DictValue -> collection.entries.values.toList()
             is RangeValue -> collection.asSequence().toList()
-            is LazySequenceValue -> collection.take(Int.MAX_VALUE).toList()
+            is LazySequenceValue -> throw SantaRuntimeException("sum: cannot sum infinite lazy sequence (use take() first)")
             else -> throw SantaRuntimeException("sum: expected collection, got ${collection.typeName()}")
         }
         if (items.isEmpty()) return IntValue(0)
@@ -1429,8 +1429,8 @@ object Builtins {
             is SetValue -> SetValue(collection.elements.drop(count).toPersistentSet())
             is RangeValue -> ListValue(collection.asSequence().drop(count).toList().toPersistentList())
             is LazySequenceValue -> {
-                val remaining = collection.take(Int.MAX_VALUE).drop(count)
-                ListValue(remaining.toPersistentList())
+                // Return a new lazy sequence that skips the first count elements
+                LazySequenceValue.fromSequence(collection.asSequence().drop(count))
             }
             else -> throw SantaRuntimeException("skip: expected collection, got ${collection.typeName()}")
         }
@@ -1658,7 +1658,7 @@ object Builtins {
                 if (value !is IntValue) false
                 else collection.asSequence().any { it == value }
             }
-            is LazySequenceValue -> collection.take(Int.MAX_VALUE).contains(value)
+            is LazySequenceValue -> collection.asSequence().contains(value)
             else -> throw SantaRuntimeException("includes?: expected collection, got ${collection.typeName()}")
         }
         return BoolValue.box(found)
@@ -1698,7 +1698,7 @@ object Builtins {
                 predicate.invoke(listOf(StringValue(it))).isTruthy()
             }
             is RangeValue -> collection.asSequence().any { predicate.invoke(listOf(it)).isTruthy() }
-            is LazySequenceValue -> collection.take(Int.MAX_VALUE).any { predicate.invoke(listOf(it)).isTruthy() }
+            is LazySequenceValue -> collection.asSequence().any { predicate.invoke(listOf(it)).isTruthy() }
             else -> throw SantaRuntimeException("any?: expected collection, got ${collection.typeName()}")
         }
         return BoolValue.box(found)
@@ -1729,8 +1729,8 @@ object Builtins {
                 predicate.invoke(listOf(StringValue(it))).isTruthy()
             }
             is RangeValue -> collection.asSequence().all { predicate.invoke(listOf(it)).isTruthy() }
-            is LazySequenceValue -> collection.take(Int.MAX_VALUE).all { predicate.invoke(listOf(it)).isTruthy() }
-            else -> throw SantaRuntimeException("all?: expected bounded collection, got ${collection.typeName()}")
+            is LazySequenceValue -> collection.asSequence().all { predicate.invoke(listOf(it)).isTruthy() }
+            else -> throw SantaRuntimeException("all?: expected collection, got ${collection.typeName()}")
         }
         return BoolValue.box(allMatch)
     }
@@ -1789,6 +1789,14 @@ object Builtins {
     @JvmStatic
     fun zip(collection1: Value, collection2: Value, collection3: Value): Value {
         return LazySequenceValue.zip(listOf(collection1, collection2, collection3))
+    }
+
+    /**
+     * zip(collection1, collection2, collection3, collection4) - Aggregate four collections into tuples.
+     */
+    @JvmStatic
+    fun zip(collection1: Value, collection2: Value, collection3: Value, collection4: Value): Value {
+        return LazySequenceValue.zip(listOf(collection1, collection2, collection3, collection4))
     }
 
     /**
@@ -1888,7 +1896,7 @@ object Builtins {
         is ListValue -> collection.elements.asSequence()
         is SetValue -> collection.elements.asSequence()
         is RangeValue -> collection.asSequence()
-        is LazySequenceValue -> collection.take(Int.MAX_VALUE).asSequence()
+        is LazySequenceValue -> collection.asSequence()
         is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.asSequence()
         else -> emptySequence()
     }
@@ -1899,7 +1907,7 @@ object Builtins {
         is DictValue -> collection.entries.values.toList()
         is StringValue -> toGraphemeList(collection.value).map { StringValue(it) }
         is RangeValue -> collection.asSequence().toList()
-        is LazySequenceValue -> collection.take(Int.MAX_VALUE)
+        is LazySequenceValue -> throw SantaRuntimeException("Cannot materialize infinite lazy sequence to list")
         else -> emptyList()
     }
 
