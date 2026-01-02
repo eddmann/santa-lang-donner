@@ -338,19 +338,39 @@ object Builtins {
      */
     @JvmStatic
     fun get(index: Value, collection: Value): Value = when (collection) {
-        is ListValue -> {
-            if (index !is IntValue) throw SantaRuntimeException("get: index must be Integer for List")
-            collection.get(index.value.toInt())
+        is ListValue -> when (index) {
+            is IntValue -> collection.get(index.value.toInt())
+            is RangeValue -> {
+                val start = index.getStart().toInt()
+                val end = if (index.isUnbounded()) {
+                    collection.size()
+                } else {
+                    index.getEndExclusive()!!.toInt()
+                }
+                collection.slice(start, end)
+            }
+            else -> throw SantaRuntimeException("get: index must be Integer or Range for List")
         }
         is SetValue -> {
             // For sets, checks membership and returns value or nil
             if (collection.contains(index)) index else NilValue
         }
         is DictValue -> collection.get(index)
-        is StringValue -> {
-            if (index !is IntValue) throw SantaRuntimeException("get: index must be Integer for String")
-            val grapheme = collection.graphemeAt(index.value.toInt())
-            if (grapheme != null) StringValue(grapheme) else NilValue
+        is StringValue -> when (index) {
+            is IntValue -> {
+                val grapheme = collection.graphemeAt(index.value.toInt())
+                if (grapheme != null) StringValue(grapheme) else NilValue
+            }
+            is RangeValue -> {
+                val start = index.getStart().toInt()
+                val end = if (index.isUnbounded()) {
+                    collection.graphemeLength()
+                } else {
+                    index.getEndExclusive()!!.toInt()
+                }
+                StringValue(collection.graphemeSlice(start, end))
+            }
+            else -> throw SantaRuntimeException("get: index must be Integer or Range for String")
         }
         is RangeValue -> {
             if (index !is IntValue) throw SantaRuntimeException("get: index must be Integer for Range")
