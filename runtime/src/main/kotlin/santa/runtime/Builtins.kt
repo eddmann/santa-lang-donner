@@ -1314,7 +1314,7 @@ object Builtins {
             is SetValue -> collection.elements.toList()
             is DictValue -> collection.entries.values.toList()
             is RangeValue -> collection.asSequence().toList()
-            is LazySequenceValue -> throw SantaRuntimeException("sum: cannot sum infinite lazy sequence (use take() first)")
+            is LazySequenceValue -> collection.toList()  // Materialize; will hang on infinite sequences
             else -> throw SantaRuntimeException("sum: expected collection, got ${collection.typeName()}")
         }
         if (items.isEmpty()) return IntValue(0)
@@ -1816,7 +1816,7 @@ object Builtins {
 
     /**
      * combinations(size, collection) - Generate all combinations of given size.
-     * Returns a List since the result is always finite.
+     * Returns a LazySequence for consistency with other santa-lang implementations.
      */
     @JvmStatic
     fun combinations(size: Value, collection: Value): Value {
@@ -1825,20 +1825,18 @@ object Builtins {
 
         val k = size.value.toInt()
         val items = collection.elements.toList()
-        val result = mutableListOf<Value>()
 
-        fun generateCombinations(start: Int, current: List<Value>) {
+        fun generateCombinations(start: Int, current: List<Value>): Sequence<Value> = sequence {
             if (current.size == k) {
-                result.add(ListValue(current.toPersistentList()))
+                yield(ListValue(current.toPersistentList()))
             } else {
                 for (i in start until items.size) {
-                    generateCombinations(i + 1, current + items[i])
+                    yieldAll(generateCombinations(i + 1, current + items[i]))
                 }
             }
         }
 
-        generateCombinations(0, emptyList())
-        return ListValue(result.toPersistentList())
+        return LazySequenceValue.fromSequence(generateCombinations(0, emptyList()))
     }
 
     /**
@@ -1931,7 +1929,7 @@ object Builtins {
         is DictValue -> collection.entries.values.toList()
         is StringValue -> toGraphemeList(collection.value).map { StringValue(it) }
         is RangeValue -> collection.asSequence().toList()
-        is LazySequenceValue -> throw SantaRuntimeException("Cannot materialize infinite lazy sequence to list")
+        is LazySequenceValue -> collection.toList()  // Materialize; will hang on infinite sequences
         else -> emptyList()
     }
 
