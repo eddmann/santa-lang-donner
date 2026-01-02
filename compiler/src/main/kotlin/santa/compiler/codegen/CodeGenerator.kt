@@ -1742,7 +1742,10 @@ private open class ExpressionGenerator(
         fun visit(e: Expr, bound: Set<String>) {
             when (e) {
                 is IdentifierExpr -> {
-                    if (e.name !in bound && e.name !in BUILTIN_FUNCTIONS) {
+                    // Add as free variable if not bound locally in this lambda
+                    // We don't filter out builtins here - that's handled when creating CaptureInfo
+                    // by checking lookupBinding at that point
+                    if (e.name !in bound) {
                         freeVars.add(e.name)
                     }
                 }

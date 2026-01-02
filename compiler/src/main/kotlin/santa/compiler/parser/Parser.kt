@@ -139,17 +139,31 @@ class Parser(private val tokens: List<Token>) {
         var left = parsePrefix()
 
         while (true) {
-            skipLineBreaks()
-            val token = peek()
+            // Only skip newlines if the next non-newline token continues the expression.
+            // This prevents `expr\n(args)` from consuming the newline and then failing
+            // to match as an infix, leaving the parser at `(` which gets picked up by parsePostfix.
+            val token = peekSkippingNewlines() ?: break
             val binding = infixBindingPower(token) ?: break
             val (leftBp, rightBp) = binding
             if (leftBp < minBp) break
 
+            // Now actually skip the newlines since we know we're continuing
+            skipLineBreaks()
             advance()
             left = parseInfix(left, token, rightBp)
         }
 
         return left
+    }
+
+    // Peek at the next non-newline token without consuming newlines.
+    // Returns null if we hit EOF.
+    private fun peekSkippingNewlines(): Token? {
+        var lookahead = index
+        while (lookahead < tokens.size && tokens[lookahead].type == TokenType.NEWLINE) {
+            lookahead++
+        }
+        return if (lookahead < tokens.size) tokens[lookahead] else null
     }
 
     private fun parseLetBinding(): LetExpr {
@@ -216,6 +230,7 @@ class Parser(private val tokens: List<Token>) {
             TokenType.LBRACKET -> parseListLiteral(token)
             TokenType.LBRACE -> parseBracedExpression(token)
             TokenType.DICT_START -> parseDictLiteral(token)
+            // For standalone lambdas, parse the full expression as body
             TokenType.PIPE -> parseFunctionLiteral(token)
             TokenType.PIPE_PIPE -> parseEmptyParamsFunctionLiteral(token)
             TokenType.LET -> parseLetBindingAfterLet(token)
@@ -289,22 +304,22 @@ class Parser(private val tokens: List<Token>) {
         throw error(peek(), "Expected ':' after dictionary key")
     }
 
-    private fun parseFunctionLiteral(startToken: Token): Expr {
+    private fun parseFunctionLiteral(startToken: Token, bodyBp: Int = 0): Expr {
         val params = parseParams()
         val body = if (check(TokenType.LBRACE)) {
             parseBlockExpression()
         } else {
-            parseExpression(0)
+            parseExpression(bodyBp)
         }
         return FunctionExpr(params, body, spanFrom(startToken.span, body.span))
     }
 
-    private fun parseEmptyParamsFunctionLiteral(startToken: Token): Expr {
+    private fun parseEmptyParamsFunctionLiteral(startToken: Token, bodyBp: Int = 0): Expr {
         // || already consumed - empty params
         val body = if (check(TokenType.LBRACE)) {
             parseBlockExpression()
         } else {
-            parseExpression(0)
+            parseExpression(bodyBp)
         }
         return FunctionExpr(emptyList(), body, spanFrom(startToken.span, body.span))
     }
@@ -488,7 +503,8 @@ class Parser(private val tokens: List<Token>) {
                 continue
             }
 
-            skipLineBreaks()
+            // Don't skip line breaks here - a newline should end the expression
+            // This prevents `expr\n(args)` from being parsed as `expr(args)`
 
             // Check for function calls (args)
             if (match(TokenType.LPAREN)) {
@@ -499,8 +515,10 @@ class Parser(private val tokens: List<Token>) {
             }
 
             // Check for trailing lambda |params| body
+            // Use minBp > COMPOSITION_BP so >> and |> are NOT consumed as part of the lambda body
+            // This allows: fold(init) |a, b| expr >> rest  to parse as (fold(init, lambda)) >> rest
             if (check(TokenType.PIPE)) {
-                val lambda = parseFunctionLiteral(advance())
+                val lambda = parseFunctionLiteral(advance(), COMPOSITION_BP + 1)
                 current = when (current) {
                     is CallExpr -> CallExpr(
                         current.callee,
