@@ -811,7 +811,19 @@ object Builtins {
                 val result = graphemes.map { mapper.invoke(listOf(StringValue(it))) }
                 ListValue(result.toPersistentList())
             }
-            is RangeValue, is LazySequenceValue -> {
+            is RangeValue -> {
+                // Bounded ranges return List, unbounded returns lazy sequence
+                if (collection.isUnbounded()) {
+                    val seq = toSequence(collection)
+                    LazySequenceValue.fromSequence(seq.map { mapper.invoke(listOf(it)) })
+                } else {
+                    val result = collection.asSequence()
+                        .map { mapper.invoke(listOf(it)) }
+                        .toList()
+                    ListValue(result.toPersistentList())
+                }
+            }
+            is LazySequenceValue -> {
                 // Return lazy sequence
                 val seq = toSequence(collection)
                 LazySequenceValue.fromSequence(seq.map { mapper.invoke(listOf(it)) })
@@ -859,7 +871,19 @@ object Builtins {
                     .map { StringValue(it) as Value }
                 ListValue(result.toPersistentList())
             }
-            is RangeValue, is LazySequenceValue -> {
+            is RangeValue -> {
+                // Bounded ranges return List, unbounded returns lazy sequence
+                if (collection.isUnbounded()) {
+                    val seq = toSequence(collection)
+                    LazySequenceValue.fromSequence(seq.filter { predicate.invoke(listOf(it)).isTruthy() })
+                } else {
+                    val result = collection.asSequence()
+                        .filter { predicate.invoke(listOf(it)).isTruthy() }
+                        .toList()
+                    ListValue(result.toPersistentList())
+                }
+            }
+            is LazySequenceValue -> {
                 // Return lazy sequence
                 val seq = toSequence(collection)
                 LazySequenceValue.fromSequence(seq.filter { predicate.invoke(listOf(it)).isTruthy() })
