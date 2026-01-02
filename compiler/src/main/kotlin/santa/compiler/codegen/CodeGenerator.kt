@@ -1252,7 +1252,10 @@ private open class ExpressionGenerator(
                         )
                     }
 
-                    pushNil()
+                    // Let expressions return the bound value (LANG.txt §6.3)
+                    mv.visitVarInsn(ALOAD, slot)
+                    mv.visitInsn(ICONST_0)
+                    mv.visitInsn(AALOAD)
                     return
                 }
 
@@ -1309,8 +1312,8 @@ private open class ExpressionGenerator(
                         false
                     )
 
-                    // Let statement as expression returns nil
-                    pushNil()
+                    // Let expressions return the bound value (LANG.txt §6.3)
+                    mv.visitVarInsn(ALOAD, slot)
                 } else {
                     // Non-self-referential binding: standard approach
                     val needsBoxing = expr.isMutable && pattern.name in boxedMutables
@@ -1329,11 +1332,16 @@ private open class ExpressionGenerator(
                         mv.visitInsn(AASTORE) // array[0] = value; Stack: array
                         mv.visitVarInsn(ASTORE, slot)
                         declareBinding(pattern.name, slot, isMutable = true, isBoxed = true)
+                        // Let expressions return the bound value (LANG.txt §6.3)
+                        mv.visitVarInsn(ALOAD, slot)
+                        mv.visitInsn(ICONST_0)
+                        mv.visitInsn(AALOAD)
                     } else {
                         declareBinding(pattern.name, slot, expr.isMutable)
                         mv.visitVarInsn(ASTORE, slot)
+                        // Let expressions return the bound value (LANG.txt §6.3)
+                        mv.visitVarInsn(ALOAD, slot)
                     }
-                    pushNil()
                 }
             }
             is ListPattern -> {
@@ -1348,8 +1356,8 @@ private open class ExpressionGenerator(
                 // Bind each element of the list pattern
                 compileListPatternBindings(pattern, listSlot, expr.isMutable)
 
-                // Let statement returns nil
-                pushNil()
+                // Let expressions return the bound value (LANG.txt §6.3)
+                mv.visitVarInsn(ALOAD, listSlot)
             }
             else -> TODO("Pattern ${pattern::class.simpleName} not yet implemented in let")
         }
