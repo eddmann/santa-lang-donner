@@ -2959,7 +2959,9 @@ private open class ExpressionGenerator(
             "union" to 1, "intersection" to 1,
             "repeat" to 1, "cycle" to 1, "lines" to 1, "upper" to 1, "lower" to 1,
             "md5" to 1, "signum" to 1, "bit_not" to 1, "id" to 1, "memoize" to 1,
-            "read" to 1, "zip" to 1, "evaluate" to 1,
+            "read" to 1, "evaluate" to 1,
+            // 2-arity (zip requires 2 collections minimum for useful output)
+            "zip" to 2,
             // 2-arity functions
             "push" to 2, "get" to 2, "map" to 2, "filter" to 2, "flat_map" to 2,
             "filter_map" to 2, "find_map" to 2, "reduce" to 2, "each" to 2,

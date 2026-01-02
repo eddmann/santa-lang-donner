@@ -2072,7 +2072,7 @@ object Builtins {
         "repeat" to BuiltinInfo(1, Builtins::repeat),
         "cycle" to BuiltinInfo(1, Builtins::cycle),
         "iterate" to BuiltinInfo(2, Builtins::iterate),
-        "zip" to BuiltinInfo(1, { v: Value -> zip(v) }),
+        "zip" to BuiltinInfo(2, { _: Value -> throw SantaRuntimeException("zip requires at least 2 arguments") }),
         "combinations" to BuiltinInfo(2, Builtins::combinations),
         "range" to BuiltinInfo(3, Builtins::range),
         // String functions
