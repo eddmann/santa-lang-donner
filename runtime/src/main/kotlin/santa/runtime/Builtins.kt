@@ -1639,6 +1639,16 @@ object Builtins {
         val found = when (collection) {
             is ListValue -> collection.elements.any { predicate.invoke(listOf(it)).isTruthy() }
             is SetValue -> collection.elements.any { predicate.invoke(listOf(it)).isTruthy() }
+            is DictValue -> {
+                collection.entries.any { (k, v) ->
+                    val result = if (predicate.arity >= 2) {
+                        predicate.invoke(listOf(v, k))
+                    } else {
+                        predicate.invoke(listOf(v))
+                    }
+                    result.isTruthy()
+                }
+            }
             is StringValue -> toGraphemeList(collection.value).any {
                 predicate.invoke(listOf(StringValue(it))).isTruthy()
             }
@@ -1660,6 +1670,16 @@ object Builtins {
         val allMatch = when (collection) {
             is ListValue -> collection.elements.all { predicate.invoke(listOf(it)).isTruthy() }
             is SetValue -> collection.elements.all { predicate.invoke(listOf(it)).isTruthy() }
+            is DictValue -> {
+                collection.entries.all { (k, v) ->
+                    val result = if (predicate.arity >= 2) {
+                        predicate.invoke(listOf(v, k))
+                    } else {
+                        predicate.invoke(listOf(v))
+                    }
+                    result.isTruthy()
+                }
+            }
             is StringValue -> toGraphemeList(collection.value).all {
                 predicate.invoke(listOf(StringValue(it))).isTruthy()
             }
