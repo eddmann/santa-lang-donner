@@ -249,6 +249,31 @@ object Operators {
             }
             else -> throw SantaRuntimeException("String index must be Integer or Range, got ${index.typeName()}")
         }
+        is RangeValue -> when (index) {
+            is IntValue -> {
+                // Range indexing: get the nth element of the range
+                val idx = index.value.toInt()
+                if (idx < 0) {
+                    throw SantaRuntimeException("Range index cannot be negative: $idx")
+                }
+                if (target.isUnbounded()) {
+                    // For unbounded range, use take to get elements up to index
+                    val elements = target.take(idx + 1)
+                    if (idx >= elements.size) {
+                        throw SantaRuntimeException("Range index out of bounds: $idx")
+                    }
+                    IntValue(elements[idx])
+                } else {
+                    // For bounded range, compute the value at index
+                    val elements = target.toList()
+                    if (idx >= elements.size) {
+                        throw SantaRuntimeException("Range index out of bounds: $idx for range of size ${elements.size}")
+                    }
+                    IntValue(elements[idx])
+                }
+            }
+            else -> throw SantaRuntimeException("Range index must be Integer, got ${index.typeName()}")
+        }
         is DictValue -> target.get(index)
         else -> throw SantaRuntimeException("Cannot index ${target.typeName()}")
     }
