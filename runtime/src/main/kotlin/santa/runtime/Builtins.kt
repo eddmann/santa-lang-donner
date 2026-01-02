@@ -890,6 +890,7 @@ object Builtins {
             when (mapped) {
                 is ListValue -> mapped.elements.asSequence()
                 is SetValue -> mapped.elements.asSequence()
+                is LazySequenceValue -> mapped.take(Int.MAX_VALUE).asSequence()
                 else -> sequenceOf(mapped)
             }
         }.toList()
