@@ -12,17 +12,38 @@ class Resolver(
     fun resolve(program: Program) {
         pushScope()
 
-        // First pass: declare section names (input, part_one, part_two)
-        // This allows sections to reference each other
+        // First pass: declare all forward-referenceable names
+        // This includes section names and top-level function bindings
         for (item in program.items) {
-            if (item is Section && item.name in SECTION_NAMES) {
-                declareName(item.name)
+            when (item) {
+                is Section -> {
+                    if (item.name in SECTION_NAMES) {
+                        declareName(item.name)
+                    }
+                }
+                is StatementItem -> {
+                    val stmt = item.statement
+                    // Declare top-level function bindings for forward reference
+                    // This allows mutual recursion and forward references between functions
+                    if (stmt is LetExpr && isTopLevelFunctionBinding(stmt)) {
+                        declarePattern(stmt.pattern)
+                    }
+                }
             }
         }
 
         // Second pass: resolve all expressions
         program.items.forEach { resolveTopLevel(it) }
         popScope()
+    }
+
+    /**
+     * Check if a let binding is a top-level function that may need forward reference support.
+     * This includes direct function expressions and calls wrapping functions (like memoize).
+     */
+    private fun isTopLevelFunctionBinding(expr: LetExpr): Boolean {
+        return expr.pattern is BindingPattern &&
+            (expr.value is FunctionExpr || hasNestedFunctionArg(expr.value))
     }
 
     private fun resolveTopLevel(item: TopLevel) {
@@ -127,15 +148,21 @@ class Resolver(
         // For function bindings with simple names, declare the name first
         // to allow recursive self-reference within the function body.
         // This also applies to calls with function arguments (e.g., memoize |n| ... fib(n-1) ...)
-        val isRecursiveBinding = (expr.value is FunctionExpr || hasNestedFunctionArg(expr.value)) &&
+        val isFunctionBinding = (expr.value is FunctionExpr || hasNestedFunctionArg(expr.value)) &&
             expr.pattern is BindingPattern
-        if (isRecursiveBinding) {
+
+        // At top-level (scopes.size == 1), function bindings are already declared in first pass.
+        // In nested scopes, declare now for self-reference support.
+        val isTopLevel = scopes.size == 1
+        val needsDeclaration = isFunctionBinding && !isTopLevel
+
+        if (needsDeclaration) {
             declarePattern(expr.pattern)
         }
 
         resolveExpr(expr.value)
 
-        if (!isRecursiveBinding) {
+        if (!isFunctionBinding) {
             declarePattern(expr.pattern)
         }
     }
