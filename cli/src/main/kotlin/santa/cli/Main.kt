@@ -6,6 +6,7 @@ import santa.compiler.error.SantaException
 import santa.compiler.lexer.SourcePosition
 import santa.compiler.parser.Section
 import santa.compiler.parser.TestBlockExpr
+import santa.runtime.Builtins
 import santa.runtime.SantaRuntimeException
 import santa.runtime.value.*
 import java.io.File
@@ -36,6 +37,9 @@ fun main(args: Array<String>) {
     }
 
     val source = file.readText()
+
+    // Set source file path for relative file lookups (e.g., AOC .input files)
+    Builtins.sourceFilePath = file.absolutePath
 
     try {
         if (runTests) {

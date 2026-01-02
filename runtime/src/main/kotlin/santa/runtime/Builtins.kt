@@ -17,6 +17,13 @@ import java.math.BigDecimal
 object Builtins {
 
     /**
+     * Path to the currently executing source file.
+     * Set by the CLI before execution to enable relative file lookups.
+     */
+    @JvmField
+    var sourceFilePath: String? = null
+
+    /**
      * size(collection) - Returns the size of a collection.
      */
     @JvmStatic
@@ -2025,10 +2032,9 @@ object Builtins {
     /**
      * Read AOC puzzle input from aoc://year/day URL.
      *
-     * 1. Check cache at ~/.cache/santa-lang/aoc/{year}/day{day}.txt
-     * 2. If not cached, get session from AOC_SESSION env var or ~/.aoc_session file
-     * 3. Fetch from https://adventofcode.com/{year}/day/{day}/input
-     * 4. Cache and return the input
+     * 1. Check for aoc{year}_day{dd}.input file next to the source file
+     * 2. If not found, fetch from https://adventofcode.com/{year}/day/{day}/input
+     * 3. Cache the fetched input to the .input file for future use
      */
     private fun readAocInput(url: String): Value {
         // Parse aoc://year/day format
@@ -2039,14 +2045,20 @@ object Builtins {
         val year = parts[0].toIntOrNull() ?: return NilValue
         val day = parts[1].toIntOrNull() ?: return NilValue
 
-        // Check cache first
-        val cacheDir = java.io.File(System.getProperty("user.home"), ".cache/santa-lang/aoc/$year")
-        val cacheFile = java.io.File(cacheDir, "day$day.txt")
-        if (cacheFile.exists()) {
-            return StringValue(cacheFile.readText())
+        // Determine local .input file path next to source file
+        val inputFileName = "aoc${year}_day${day.toString().padStart(2, '0')}.input"
+        val localInputFile = sourceFilePath?.let { sourcePath ->
+            java.io.File(sourcePath).parentFile?.let { sourceDir ->
+                java.io.File(sourceDir, inputFileName)
+            }
         }
 
-        // Get session token
+        // Check for cached .input file first
+        if (localInputFile?.exists() == true) {
+            return StringValue(localInputFile.readText())
+        }
+
+        // Get session token for fetching
         val session = getAocSession() ?: return NilValue
 
         // Fetch from AOC
@@ -2059,9 +2071,8 @@ object Builtins {
 
             if (connection.responseCode == 200) {
                 val content = connection.inputStream.bufferedReader().readText()
-                // Cache for future use
-                cacheDir.mkdirs()
-                cacheFile.writeText(content)
+                // Cache to .input file next to source for future use
+                localInputFile?.writeText(content)
                 StringValue(content)
             } else {
                 NilValue
