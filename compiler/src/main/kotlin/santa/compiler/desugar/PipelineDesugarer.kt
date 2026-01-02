@@ -3,14 +3,17 @@ package santa.compiler.desugar
 import santa.compiler.parser.*
 
 /**
- * Desugars pipeline expressions where the right-hand side is a call expression.
+ * Desugars pipeline expressions by recursively transforming nested expressions.
  *
- * Examples:
- * - `x |> f(y)` → `f(y, x)` (appends piped value as last argument)
- * - `x |> f` → unchanged (handled at runtime by Operators.pipeline)
- * - `x |> |y| y + 1` → unchanged (handled at runtime)
+ * Pipelines are NOT desugared to function calls. Instead, all pipelines are kept
+ * as binary expressions and handled at runtime by Operators.pipeline.
  *
- * This transformation allows pipelines to work with partially applied functions.
+ * This allows pipelines to work correctly with:
+ * - Builtins like `x |> map(f)` where `map(f)` returns a PartiallyAppliedBuiltinValue
+ * - User functions like `x |> make_fn(y)` where `make_fn(y)` returns a function
+ *
+ * At runtime, Operators.pipeline invokes the right-hand side as a function with
+ * the left-hand side as the argument.
  */
 object PipelineDesugarer {
 
@@ -117,27 +120,12 @@ object PipelineDesugarer {
     }
 
     /**
-     * Desugar a pipeline expression.
-     *
-     * If the right-hand side is a CallExpr, we append the left-hand side as an additional argument.
-     * Otherwise, we keep the pipeline as-is for runtime handling.
+     * Transform a pipeline expression by recursively desugaring its operands.
+     * The pipeline itself is kept as a binary expression for runtime handling.
      */
     private fun desugarPipeline(expr: BinaryExpr): Expr {
         val left = desugarExpr(expr.left)
         val right = desugarExpr(expr.right)
-
-        return when (right) {
-            is CallExpr -> {
-                // Transform: left |> callee(args...) → callee(args..., left)
-                right.copy(
-                    arguments = right.arguments + ExprArgument(left)
-                )
-            }
-            else -> {
-                // Keep as pipeline binary expression for runtime handling
-                // (e.g., `x |> f` where f is just an identifier)
-                expr.copy(left = left, right = right)
-            }
-        }
+        return expr.copy(left = left, right = right)
     }
 }
