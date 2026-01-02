@@ -111,6 +111,10 @@ private class ClassGenerator(private val className: String) {
             // A binding needs boxing if it's referenced by another function that's defined BEFORE it.
             val forwardReferencedBindings = findForwardReferencedBindings(program)
 
+            // Find mutable variables that need boxing because they're captured by closures
+            val topLevelBoxedMutables = findTopLevelBoxedMutables(program)
+            exprGen.boxedMutables = topLevelBoxedMutables
+
             // Pre-allocate boxed slots for forward-referenced function bindings.
             // This enables forward references between functions by using boxed values
             // so that when a function is defined, all references see the update.
@@ -244,6 +248,295 @@ private class ClassGenerator(private val className: String) {
         }
 
         return forwardReferenced
+    }
+
+    /**
+     * Find mutable variables at top level that need boxing because they're captured by closures.
+     */
+    private fun findTopLevelBoxedMutables(program: Program): Set<String> {
+        val boxed = mutableSetOf<String>()
+        val mutableVars = mutableSetOf<String>()
+
+        // First pass: find all mutable variable declarations at top level
+        for (item in program.items) {
+            if (item is StatementItem) {
+                val stmt = item.statement
+                if (stmt is LetExpr && stmt.isMutable) {
+                    mutableVars.addAll(collectPatternBindingsStatic(stmt.pattern))
+                }
+            }
+        }
+
+        // Second pass: find which mutables are captured by lambdas
+        for (item in program.items) {
+            val expr = when (item) {
+                is StatementItem -> when (val stmt = item.statement) {
+                    is ExprStatement -> stmt.expr
+                    is LetExpr -> stmt.value
+                    is ReturnExpr -> stmt.value
+                    is BreakExpr -> stmt.value
+                }
+                is Section -> item.expr
+            } ?: continue
+
+            val captured = findCapturedVariablesStatic(expr, mutableVars)
+            boxed.addAll(captured.filter { it in mutableVars })
+        }
+
+        return boxed
+    }
+
+    private fun collectPatternBindingsStatic(pattern: Pattern): Set<String> {
+        return when (pattern) {
+            is BindingPattern -> setOf(pattern.name)
+            is ListPattern -> pattern.elements.flatMap { collectPatternBindingsStatic(it) }.toSet()
+            is RestPattern -> if (pattern.name != null) setOf(pattern.name) else emptySet()
+            is WildcardPattern, is LiteralPattern, is RangePattern -> emptySet()
+        }
+    }
+
+    private fun collectParamBindingsStatic(params: List<Param>): Set<String> {
+        return params.flatMap { param ->
+            when (param) {
+                is NamedParam -> listOf(param.name)
+                is RestParam -> listOf(param.name)
+                is PatternParam -> collectPatternBindingsStatic(param.pattern).toList()
+                PlaceholderParam -> emptyList()
+            }
+        }.toSet()
+    }
+
+    /**
+     * Find variables captured by nested lambdas in an expression.
+     * Static version for use before ExpressionGenerator is created.
+     */
+    private fun findCapturedVariablesStatic(expr: Expr, declared: Set<String>): Set<String> {
+        val captured = mutableSetOf<String>()
+
+        fun visit(e: Expr, bound: Set<String>) {
+            when (e) {
+                is IdentifierExpr -> {}  // Simple identifier reference, no nested capture
+                is FunctionExpr -> {
+                    // This is a nested lambda - find its free variables
+                    val fnParams = collectParamBindingsStatic(e.params)
+                    val freeVars = findFreeVariablesStatic(e.body, e.params)
+                    // Variables free in the lambda but declared in our scope are captured
+                    captured.addAll(freeVars.filter { it in bound || it in declared })
+                    // Also recurse into the lambda body to find captures from nested lambdas
+                    visit(e.body, bound + fnParams)
+                }
+                is BinaryExpr -> { visit(e.left, bound); visit(e.right, bound) }
+                is UnaryExpr -> visit(e.expr, bound)
+                is LetExpr -> visit(e.value, bound)
+                is BlockExpr -> {
+                    var currentBound = bound
+                    for (stmt in e.statements) {
+                        when (stmt) {
+                            is ExprStatement -> visit(stmt.expr, currentBound)
+                            is LetExpr -> {
+                                visit(stmt.value, currentBound)
+                                currentBound = currentBound + collectPatternBindingsStatic(stmt.pattern)
+                            }
+                            is ReturnExpr -> stmt.value?.let { visit(it, currentBound) }
+                            is BreakExpr -> stmt.value?.let { visit(it, currentBound) }
+                        }
+                    }
+                }
+                is CallExpr -> {
+                    visit(e.callee, bound)
+                    for (arg in e.arguments) {
+                        visit(arg.expr, bound)
+                    }
+                }
+                is IfExpr -> {
+                    val thenBound = when (val cond = e.condition) {
+                        is ExprCondition -> {
+                            visit(cond.expr, bound)
+                            bound
+                        }
+                        is LetCondition -> {
+                            visit(cond.value, bound)
+                            bound + collectPatternBindingsStatic(cond.pattern)
+                        }
+                    }
+                    visit(e.thenBranch, thenBound)
+                    e.elseBranch?.let { visit(it, bound) }
+                }
+                is MatchExpr -> {
+                    visit(e.subject, bound)
+                    for (arm in e.arms) {
+                        val patternBound = collectPatternBindingsStatic(arm.pattern)
+                        arm.guard?.let { visit(it, bound + patternBound) }
+                        visit(arm.body, bound + patternBound)
+                    }
+                }
+                is IndexExpr -> { visit(e.target, bound); visit(e.index, bound) }
+                is AssignmentExpr -> {
+                    // The assignment target may need to be captured
+                    if (e.target.name in bound || e.target.name in declared) {
+                        captured.add(e.target.name)
+                    }
+                    visit(e.value, bound)
+                }
+                is ListLiteralExpr -> e.elements.forEach { elem ->
+                    when (elem) {
+                        is ExprElement -> visit(elem.expr, bound)
+                        is SpreadElement -> visit(elem.expr, bound)
+                    }
+                }
+                is SetLiteralExpr -> e.elements.forEach { elem ->
+                    when (elem) {
+                        is ExprElement -> visit(elem.expr, bound)
+                        is SpreadElement -> visit(elem.expr, bound)
+                    }
+                }
+                is DictLiteralExpr -> e.entries.forEach { entry ->
+                    when (entry) {
+                        is KeyValueEntry -> {
+                            visit(entry.key, bound)
+                            visit(entry.value, bound)
+                        }
+                        is ShorthandEntry -> {}
+                    }
+                }
+                is RangeExpr -> {
+                    visit(e.start, bound)
+                    e.end?.let { visit(it, bound) }
+                }
+                is InfixCallExpr -> {
+                    visit(e.left, bound)
+                    visit(e.right, bound)
+                }
+                // Terminals
+                is IntLiteralExpr, is DecimalLiteralExpr, is StringLiteralExpr,
+                is BoolLiteralExpr, is NilLiteralExpr, is PlaceholderExpr, is OperatorExpr -> {}
+                is ReturnExpr -> e.value?.let { visit(it, bound) }
+                is BreakExpr -> e.value?.let { visit(it, bound) }
+                is TestBlockExpr -> e.entries.forEach { visit(it.expr, bound) }
+            }
+        }
+
+        visit(expr, emptySet())
+        return captured
+    }
+
+    /**
+     * Find free variables in an expression (static version).
+     */
+    private fun findFreeVariablesStatic(body: Expr, params: List<Param>): Set<String> {
+        val freeVars = mutableSetOf<String>()
+        val paramNames = collectParamBindingsStatic(params)
+
+        fun visit(e: Expr, bound: Set<String>) {
+            when (e) {
+                is IdentifierExpr -> {
+                    if (e.name !in bound) {
+                        freeVars.add(e.name)
+                    }
+                }
+                is BinaryExpr -> { visit(e.left, bound); visit(e.right, bound) }
+                is UnaryExpr -> visit(e.expr, bound)
+                is CallExpr -> {
+                    visit(e.callee, bound)
+                    e.arguments.forEach { visit(it.expr, bound) }
+                }
+                is IndexExpr -> { visit(e.target, bound); visit(e.index, bound) }
+                is LetExpr -> {
+                    visit(e.value, bound)
+                }
+                is BlockExpr -> {
+                    var currentBound = bound
+                    for (stmt in e.statements) {
+                        when (stmt) {
+                            is ExprStatement -> visit(stmt.expr, currentBound)
+                            is LetExpr -> {
+                                visit(stmt.value, currentBound)
+                                currentBound = currentBound + collectPatternBindingsStatic(stmt.pattern)
+                            }
+                            is ReturnExpr -> stmt.value?.let { visit(it, currentBound) }
+                            is BreakExpr -> stmt.value?.let { visit(it, currentBound) }
+                        }
+                    }
+                }
+                is IfExpr -> {
+                    val thenBound = when (val cond = e.condition) {
+                        is ExprCondition -> {
+                            visit(cond.expr, bound)
+                            bound
+                        }
+                        is LetCondition -> {
+                            visit(cond.value, bound)
+                            bound + collectPatternBindingsStatic(cond.pattern)
+                        }
+                    }
+                    visit(e.thenBranch, thenBound)
+                    e.elseBranch?.let { visit(it, bound) }
+                }
+                is MatchExpr -> {
+                    visit(e.subject, bound)
+                    for (arm in e.arms) {
+                        val patternBound = collectPatternBindingsStatic(arm.pattern)
+                        arm.guard?.let { visit(it, bound + patternBound) }
+                        visit(arm.body, bound + patternBound)
+                    }
+                }
+                is FunctionExpr -> {
+                    val fnParams = collectParamBindingsStatic(e.params)
+                    visit(e.body, bound + fnParams)
+                }
+                is ListLiteralExpr -> e.elements.forEach { elem ->
+                    when (elem) {
+                        is ExprElement -> visit(elem.expr, bound)
+                        is SpreadElement -> visit(elem.expr, bound)
+                    }
+                }
+                is SetLiteralExpr -> e.elements.forEach { elem ->
+                    when (elem) {
+                        is ExprElement -> visit(elem.expr, bound)
+                        is SpreadElement -> visit(elem.expr, bound)
+                    }
+                }
+                is DictLiteralExpr -> e.entries.forEach { entry ->
+                    when (entry) {
+                        is KeyValueEntry -> {
+                            visit(entry.key, bound)
+                            visit(entry.value, bound)
+                        }
+                        is ShorthandEntry -> {
+                            if (entry.name !in bound) {
+                                freeVars.add(entry.name)
+                            }
+                        }
+                    }
+                }
+                is RangeExpr -> {
+                    visit(e.start, bound)
+                    e.end?.let { visit(it, bound) }
+                }
+                is InfixCallExpr -> {
+                    if (e.functionName !in bound) {
+                        freeVars.add(e.functionName)
+                    }
+                    visit(e.left, bound)
+                    visit(e.right, bound)
+                }
+                is AssignmentExpr -> {
+                    if (e.target.name !in bound) {
+                        freeVars.add(e.target.name)
+                    }
+                    visit(e.value, bound)
+                }
+                // Terminals
+                is IntLiteralExpr, is DecimalLiteralExpr, is StringLiteralExpr,
+                is BoolLiteralExpr, is NilLiteralExpr, is PlaceholderExpr, is OperatorExpr -> {}
+                is ReturnExpr -> e.value?.let { visit(it, bound) }
+                is BreakExpr -> e.value?.let { visit(it, bound) }
+                is TestBlockExpr -> e.entries.forEach { visit(it.expr, bound) }
+            }
+        }
+
+        visit(body, paramNames)
+        return freeVars
     }
 
     /**
@@ -568,7 +861,7 @@ private open class ExpressionGenerator(
     protected var currentSelfRefName: String? = null
 
     // Tracks mutable variables that need to be boxed in the current scope
-    protected var boxedMutables: Set<String> = emptySet()
+    var boxedMutables: Set<String> = emptySet()
 
     init {
         pushScope()
