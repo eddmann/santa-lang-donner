@@ -107,7 +107,36 @@ private class ClassGenerator(private val className: String) {
             val partSections = sections.filter { it.name in setOf("part_one", "part_two") }
             val hasParts = partSections.isNotEmpty()
 
-            // Process all items in order, binding sections as variables
+            // Find which top-level function bindings need forward-reference boxing.
+            // A binding needs boxing if it's referenced by another function that's defined BEFORE it.
+            val forwardReferencedBindings = findForwardReferencedBindings(program)
+
+            // Pre-allocate boxed slots for forward-referenced function bindings.
+            // This enables forward references between functions by using boxed values
+            // so that when a function is defined, all references see the update.
+            for (item in program.items) {
+                if (item is StatementItem) {
+                    val stmt = item.statement
+                    if (stmt is LetExpr && isTopLevelFunctionBinding(stmt)) {
+                        val pattern = stmt.pattern as BindingPattern
+                        if (pattern.name in forwardReferencedBindings) {
+                            val slot = exprGen.allocateSlot()
+                            // Create a box (Value[1]) with nil as placeholder
+                            mv.visitInsn(ICONST_1)
+                            mv.visitTypeInsn(ANEWARRAY, VALUE_TYPE)
+                            mv.visitInsn(DUP)
+                            mv.visitInsn(ICONST_0)
+                            exprGen.pushNil()
+                            mv.visitInsn(AASTORE)
+                            mv.visitVarInsn(ASTORE, slot)
+                            // Mark as boxed so captures use indirection
+                            exprGen.declareBinding(pattern.name, slot, isMutable = false, isBoxed = true)
+                        }
+                    }
+                }
+            }
+
+            // Second pass: compile all items
             program.items.forEachIndexed { index, item ->
                 when (item) {
                     is StatementItem -> {
@@ -149,6 +178,147 @@ private class ClassGenerator(private val className: String) {
         mv.visitInsn(ARETURN)
         mv.visitMaxs(-1, -1) // Computed automatically
         mv.visitEnd()
+    }
+
+    /**
+     * Check if a let binding is a top-level function that may need forward reference support.
+     */
+    private fun isTopLevelFunctionBinding(expr: LetExpr): Boolean {
+        return expr.pattern is BindingPattern &&
+            (expr.value is FunctionExpr || hasNestedFunctionArg(expr.value))
+    }
+
+    private fun hasNestedFunctionArg(expr: Expr): Boolean {
+        return when (expr) {
+            is CallExpr -> expr.arguments.any { it.expr is FunctionExpr || hasNestedFunctionArg(it.expr) }
+            is BinaryExpr -> hasNestedFunctionArg(expr.left) || hasNestedFunctionArg(expr.right)
+            else -> false
+        }
+    }
+
+    /**
+     * Find function bindings that are forward-referenced (referenced before they're defined).
+     * These need to be boxed so that references captured before definition can see the update.
+     */
+    private fun findForwardReferencedBindings(program: Program): Set<String> {
+        val functionBindingNames = mutableSetOf<String>()
+        val definedNames = mutableSetOf<String>()
+        val forwardReferenced = mutableSetOf<String>()
+
+        // Collect all top-level function binding names
+        for (item in program.items) {
+            if (item is StatementItem && item.statement is LetExpr) {
+                val stmt = item.statement
+                if (isTopLevelFunctionBinding(stmt) && stmt.pattern is BindingPattern) {
+                    functionBindingNames.add((stmt.pattern as BindingPattern).name)
+                }
+            }
+        }
+
+        // Scan each item to find forward references
+        for (item in program.items) {
+            when (item) {
+                is StatementItem -> {
+                    val stmt = item.statement
+                    if (stmt is LetExpr && stmt.pattern is BindingPattern) {
+                        val name = (stmt.pattern as BindingPattern).name
+                        // Find references to undefined function bindings in this expression
+                        val refs = findIdentifierReferences(stmt.value)
+                        for (ref in refs) {
+                            if (ref in functionBindingNames && ref !in definedNames && ref != name) {
+                                forwardReferenced.add(ref)
+                            }
+                        }
+                        definedNames.add(name)
+                    }
+                }
+                is Section -> {
+                    val refs = findIdentifierReferences(item.expr)
+                    for (ref in refs) {
+                        if (ref in functionBindingNames && ref !in definedNames) {
+                            forwardReferenced.add(ref)
+                        }
+                    }
+                }
+            }
+        }
+
+        return forwardReferenced
+    }
+
+    /**
+     * Find all identifier references in an expression.
+     */
+    private fun findIdentifierReferences(expr: Expr): Set<String> {
+        val refs = mutableSetOf<String>()
+
+        fun visit(e: Expr) {
+            when (e) {
+                is IdentifierExpr -> refs.add(e.name)
+                is BinaryExpr -> { visit(e.left); visit(e.right) }
+                is UnaryExpr -> visit(e.expr)
+                is CallExpr -> {
+                    visit(e.callee)
+                    e.arguments.forEach { visit(it.expr) }
+                }
+                is IndexExpr -> { visit(e.target); visit(e.index) }
+                is LetExpr -> visit(e.value)
+                is BlockExpr -> e.statements.forEach { stmt ->
+                    when (stmt) {
+                        is ExprStatement -> visit(stmt.expr)
+                        is LetExpr -> visit(stmt.value)
+                        is ReturnExpr -> stmt.value?.let { visit(it) }
+                        is BreakExpr -> stmt.value?.let { visit(it) }
+                    }
+                }
+                is IfExpr -> {
+                    when (val cond = e.condition) {
+                        is ExprCondition -> visit(cond.expr)
+                        is LetCondition -> visit(cond.value)
+                    }
+                    visit(e.thenBranch)
+                    e.elseBranch?.let { visit(it) }
+                }
+                is MatchExpr -> {
+                    visit(e.subject)
+                    e.arms.forEach { arm ->
+                        arm.guard?.let { visit(it) }
+                        visit(arm.body)
+                    }
+                }
+                is FunctionExpr -> visit(e.body)
+                is ListLiteralExpr -> e.elements.forEach { visit(it.expr) }
+                is SetLiteralExpr -> e.elements.forEach { visit(it.expr) }
+                is DictLiteralExpr -> e.entries.forEach { entry ->
+                    when (entry) {
+                        is KeyValueEntry -> { visit(entry.key); visit(entry.value) }
+                        is ShorthandEntry -> refs.add(entry.name)
+                    }
+                }
+                is RangeExpr -> {
+                    visit(e.start)
+                    e.end?.let { visit(it) }
+                }
+                is InfixCallExpr -> {
+                    refs.add(e.functionName)
+                    visit(e.left)
+                    visit(e.right)
+                }
+                is AssignmentExpr -> {
+                    refs.add(e.target.name)
+                    visit(e.value)
+                }
+                is ReturnExpr -> e.value?.let { visit(it) }
+                is BreakExpr -> e.value?.let { visit(it) }
+                is TestBlockExpr -> e.entries.forEach { visit(it.expr) }
+                // Terminals
+                is IntLiteralExpr, is DecimalLiteralExpr, is StringLiteralExpr,
+                is BoolLiteralExpr, is NilLiteralExpr, is PlaceholderExpr, is OperatorExpr -> {}
+            }
+        }
+
+        visit(expr)
+        return refs
     }
 
     /**
@@ -751,7 +921,48 @@ private open class ExpressionGenerator(
         // Handle the pattern (for now, just simple binding patterns)
         when (val pattern = expr.pattern) {
             is BindingPattern -> {
-                val slot = allocateSlot()
+                // Check if this binding was pre-allocated (for top-level forward references)
+                val existingBinding = lookupBinding(pattern.name)
+                val isPreAllocated = existingBinding != null && existingBinding.isBoxed
+
+                if (isPreAllocated) {
+                    // Pre-allocated boxed binding: update box contents
+                    val slot = existingBinding!!.slot
+                    val isSelfReferential = isValueSelfReferential(expr.value, pattern.name)
+
+                    currentSelfRefName = if (isSelfReferential) pattern.name else null
+                    compileExpr(expr.value)
+                    currentSelfRefName = null
+
+                    // Update box: array[0] = value
+                    // Stack: value
+                    mv.visitVarInsn(ALOAD, slot)  // Load the box array
+                    mv.visitInsn(SWAP)            // array, value
+                    mv.visitInsn(ICONST_0)        // array, value, 0
+                    mv.visitInsn(SWAP)            // array, 0, value
+                    mv.visitInsn(AASTORE)         // array[0] = value
+
+                    if (isSelfReferential) {
+                        // Load the value back and call setSelfRef
+                        mv.visitVarInsn(ALOAD, slot)
+                        mv.visitInsn(ICONST_0)
+                        mv.visitInsn(AALOAD)
+                        mv.visitTypeInsn(CHECKCAST, FUNCTION_VALUE_TYPE)
+                        mv.visitInsn(DUP)
+                        mv.visitMethodInsn(
+                            INVOKEVIRTUAL,
+                            FUNCTION_VALUE_TYPE,
+                            "setSelfRef",
+                            "(L${VALUE_TYPE};)V",
+                            false
+                        )
+                    }
+
+                    pushNil()
+                    return
+                }
+
+                val slot = existingBinding?.slot ?: allocateSlot()
 
                 // Check if this is a self-referential function binding.
                 // This can be a direct function (`let f = |x| ... f(...) ...`)
@@ -1802,7 +2013,13 @@ private open class ExpressionGenerator(
                     visit(e.body, bound + fnParams)
                 }
                 is IndexExpr -> { visit(e.target, bound); visit(e.index, bound) }
-                is AssignmentExpr -> visit(e.value, bound)
+                is AssignmentExpr -> {
+                    // The assignment target is a free variable if not bound locally
+                    if (e.target.name !in bound) {
+                        freeVars.add(e.target.name)
+                    }
+                    visit(e.value, bound)
+                }
                 is ListLiteralExpr -> e.elements.forEach { elem ->
                     when (elem) {
                         is ExprElement -> visit(elem.expr, bound)
@@ -1941,7 +2158,13 @@ private open class ExpressionGenerator(
                     }
                 }
                 is IndexExpr -> { visit(e.target, bound); visit(e.index, bound) }
-                is AssignmentExpr -> visit(e.value, bound)
+                is AssignmentExpr -> {
+                    // The assignment target may need to be captured
+                    if (e.target.name in bound || e.target.name in declared) {
+                        captured.add(e.target.name)
+                    }
+                    visit(e.value, bound)
+                }
                 is ListLiteralExpr -> e.elements.forEach { elem ->
                     when (elem) {
                         is ExprElement -> visit(elem.expr, bound)
@@ -2572,7 +2795,9 @@ private open class LambdaExpressionGenerator(
         // Without this, nested lambdas can't find captured variables via lookupBinding.
         for (capture in captures) {
             if (capture.isSelfRef) {
-                // Self-references are loaded from base class selfRef field
+                // Self-references are loaded from base class selfRef field.
+                // The selfRef field contains the actual Value, not a box,
+                // so we don't mark it as boxed even if the original binding was boxed.
                 mv.visitVarInsn(ALOAD, 0) // this
                 mv.visitFieldInsn(
                     GETFIELD,
@@ -2580,6 +2805,9 @@ private open class LambdaExpressionGenerator(
                     "selfRef",
                     "L${VALUE_TYPE};"
                 )
+                val slot = nextSlot++
+                mv.visitVarInsn(ASTORE, slot)
+                declareBinding(capture.name, slot, isMutable = false, isBoxed = false)
             } else {
                 // Load from this.fieldName
                 val fieldType = if (capture.isBoxed) "[L${VALUE_TYPE};" else "L${VALUE_TYPE};"
@@ -2590,11 +2818,10 @@ private open class LambdaExpressionGenerator(
                     capture.name,
                     fieldType
                 )
+                val slot = nextSlot++
+                mv.visitVarInsn(ASTORE, slot)
+                declareBinding(capture.name, slot, isMutable = capture.isMutable, isBoxed = capture.isBoxed)
             }
-            // Store in local slot
-            val slot = nextSlot++
-            mv.visitVarInsn(ASTORE, slot)
-            declareBinding(capture.name, slot, isMutable = capture.isMutable, isBoxed = capture.isBoxed)
         }
     }
 
