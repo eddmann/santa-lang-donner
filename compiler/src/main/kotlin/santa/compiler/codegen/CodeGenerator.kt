@@ -681,8 +681,9 @@ private class ClassGenerator(private val className: String) {
         mv.visitCode()
 
         // Call super(arity)
+        // Count all params that consume exactly one argument (not RestParam which is variadic)
         mv.visitVarInsn(ALOAD, 0)
-        val arity = params.count { it is NamedParam }
+        val arity = params.count { it !is RestParam }
         pushInt(mv, arity)
         mv.visitMethodInsn(INVOKESPECIAL, FUNCTION_VALUE_TYPE, "<init>", "(I)V", false)
 
