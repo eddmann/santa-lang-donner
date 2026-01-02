@@ -1816,6 +1816,7 @@ object Builtins {
 
     /**
      * combinations(size, collection) - Generate all combinations of given size.
+     * Returns a List since the result is always finite.
      */
     @JvmStatic
     fun combinations(size: Value, collection: Value): Value {
@@ -1824,18 +1825,20 @@ object Builtins {
 
         val k = size.value.toInt()
         val items = collection.elements.toList()
+        val result = mutableListOf<Value>()
 
-        fun generateCombinations(start: Int, current: List<Value>): Sequence<Value> = sequence {
+        fun generateCombinations(start: Int, current: List<Value>) {
             if (current.size == k) {
-                yield(ListValue(current.toPersistentList()))
+                result.add(ListValue(current.toPersistentList()))
             } else {
                 for (i in start until items.size) {
-                    yieldAll(generateCombinations(i + 1, current + items[i]))
+                    generateCombinations(i + 1, current + items[i])
                 }
             }
         }
 
-        return LazySequenceValue.fromSequence(generateCombinations(0, emptyList()))
+        generateCombinations(0, emptyList())
+        return ListValue(result.toPersistentList())
     }
 
     /**
@@ -1855,15 +1858,21 @@ object Builtins {
         if (s > 0 && start > end) throw SantaRuntimeException("range: step direction mismatch (positive step with start > end)")
         if (s < 0 && start < end) throw SantaRuntimeException("range: step direction mismatch (negative step with start < end)")
 
-        val seq = generateSequence(start) { prev ->
-            val next = prev + s
-            // Use inclusive end (<=) to match reference behavior for AOC compatibility
-            if (s > 0 && next <= end) next
-            else if (s < 0 && next >= end) next
-            else null
-        }.map { IntValue(it) as Value }
-
-        return LazySequenceValue.fromSequence(seq)
+        // Generate the range as a list since it's finite (has explicit bounds)
+        val result = mutableListOf<Value>()
+        var current = start
+        if (s > 0) {
+            while (current <= end) {
+                result.add(IntValue(current))
+                current += s
+            }
+        } else {
+            while (current >= end) {
+                result.add(IntValue(current))
+                current += s
+            }
+        }
+        return ListValue(result.toPersistentList())
     }
 
     // =========================================================================
