@@ -358,15 +358,20 @@ class RangeValue private constructor(
 /**
  * Lazy sequence with deferred computation (LANG.txt §3.8).
  *
- * Provides infinite sequences computed on-demand.
+ * Lazy sequences can be either finite (like combinations) or infinite (like iterate).
+ * The `finite` flag tracks this to guard against operations like sum() on infinite sequences.
  */
 class LazySequenceValue private constructor(
-    private val generator: () -> Sequence<Value>
+    private val generator: () -> Sequence<Value>,
+    private val finite: Boolean = false
 ) : Value {
 
     override fun isTruthy(): Boolean = true  // Always truthy
     override fun isHashable(): Boolean = false  // Not hashable
     override fun typeName(): String = "LazySequence"
+
+    /** Returns true if this sequence is known to be finite. */
+    fun isFinite(): Boolean = finite
 
     /** Take first n elements. */
     fun take(n: Int): List<Value> = generator().take(n).toList()
@@ -378,35 +383,35 @@ class LazySequenceValue private constructor(
     fun asSequence(): Sequence<Value> = generator()
 
     companion object {
-        /** Create sequence from generator function. */
+        /** Create sequence from generator function (assumed infinite by default). */
         fun fromGenerator(generator: () -> Sequence<Value>): LazySequenceValue {
-            return LazySequenceValue(generator)
+            return LazySequenceValue(generator, finite = false)
         }
 
         /** Create sequence by repeatedly applying function: iterate(f, init) -> init, f(init), f(f(init)), ... */
         fun iterate(initial: Value, f: (Value) -> Value): LazySequenceValue {
-            return LazySequenceValue {
+            return LazySequenceValue({
                 generateSequence(initial) { f(it) }
-            }
+            }, finite = false)
         }
 
         /** Create sequence repeating same value infinitely: repeat(x) -> x, x, x, ... */
         fun repeat(value: Value): LazySequenceValue {
-            return LazySequenceValue {
+            return LazySequenceValue({
                 generateSequence { value }
-            }
+            }, finite = false)
         }
 
         /** Create sequence cycling through list: cycle([a, b]) -> a, b, a, b, ... */
         fun cycle(values: List<Value>): LazySequenceValue {
-            return LazySequenceValue {
+            return LazySequenceValue({
                 if (values.isEmpty()) {
                     emptySequence()
                 } else {
                     generateSequence(0) { (it + 1) % values.size }
                         .map { values[it] }
                 }
-            }
+            }, finite = false)
         }
 
         /**
@@ -418,7 +423,7 @@ class LazySequenceValue private constructor(
         fun zip(collections: List<Value>): Value {
             if (collections.isEmpty()) return ListValue(persistentListOf())
 
-            // Check if all collections are infinite (unbounded ranges or lazy sequences)
+            // Check if all collections are infinite (unbounded ranges or infinite lazy sequences)
             val allInfinite = collections.all { isInfinite(it) }
 
             // Convert each collection to a sequence
@@ -428,8 +433,8 @@ class LazySequenceValue private constructor(
             val zippedSequence = zipSequences(sequences)
 
             return if (allInfinite) {
-                // All infinite -> return LazySequence
-                LazySequenceValue { zippedSequence }
+                // All infinite -> return infinite LazySequence
+                LazySequenceValue({ zippedSequence }, finite = false)
             } else {
                 // At least one finite -> materialize to List
                 ListValue(zippedSequence.toList().toPersistentList())
@@ -438,7 +443,7 @@ class LazySequenceValue private constructor(
 
         private fun isInfinite(value: Value): Boolean = when (value) {
             is RangeValue -> value.isUnbounded()
-            is LazySequenceValue -> true  // Lazy sequences are conceptually infinite
+            is LazySequenceValue -> !value.finite  // Check the finite flag
             else -> false
         }
 
@@ -472,9 +477,19 @@ class LazySequenceValue private constructor(
             }
         }
 
-        /** Create a LazySequenceValue from an existing sequence. */
+        /** Create a LazySequenceValue from an existing sequence (assumed infinite by default). */
         fun fromSequence(seq: Sequence<Value>): LazySequenceValue {
-            return LazySequenceValue { seq }
+            return LazySequenceValue({ seq }, finite = false)
+        }
+
+        /** Create a finite LazySequenceValue from a sequence with known bounds. */
+        fun fromFiniteSequence(seq: Sequence<Value>): LazySequenceValue {
+            return LazySequenceValue({ seq }, finite = true)
+        }
+
+        /** Create a LazySequenceValue preserving the finiteness of the source. */
+        fun withSameFiniteness(source: LazySequenceValue, seq: Sequence<Value>): LazySequenceValue {
+            return LazySequenceValue({ seq }, finite = source.finite)
         }
     }
 

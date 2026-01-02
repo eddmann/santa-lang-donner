@@ -844,9 +844,9 @@ object Builtins {
                 }
             }
             is LazySequenceValue -> {
-                // Return lazy sequence
+                // Return lazy sequence preserving finiteness
                 val seq = toSequence(collection)
-                LazySequenceValue.fromSequence(seq.map { mapper.invoke(listOf(it)) })
+                LazySequenceValue.withSameFiniteness(collection, seq.map { mapper.invoke(listOf(it)) })
             }
             else -> throw SantaRuntimeException("map: expected collection, got ${collection.typeName()}")
         }
@@ -904,9 +904,9 @@ object Builtins {
                 }
             }
             is LazySequenceValue -> {
-                // Return lazy sequence
+                // Return lazy sequence preserving finiteness
                 val seq = toSequence(collection)
-                LazySequenceValue.fromSequence(seq.filter { predicate.invoke(listOf(it)).isTruthy() })
+                LazySequenceValue.withSameFiniteness(collection, seq.filter { predicate.invoke(listOf(it)).isTruthy() })
             }
             else -> throw SantaRuntimeException("filter: expected collection, got ${collection.typeName()}")
         }
@@ -983,9 +983,18 @@ object Builtins {
                 }
                 ListValue(result.toPersistentList())
             }
-            is RangeValue, is LazySequenceValue -> {
+            is RangeValue -> {
                 val seq = toSequence(collection)
+                // Unbounded ranges produce infinite sequences
                 LazySequenceValue.fromSequence(seq.mapNotNull { elem ->
+                    val mapped = mapper.invoke(listOf(elem))
+                    if (mapped.isTruthy()) mapped else null
+                })
+            }
+            is LazySequenceValue -> {
+                val seq = toSequence(collection)
+                // Preserve finiteness of the source
+                LazySequenceValue.withSameFiniteness(collection, seq.mapNotNull { elem ->
                     val mapped = mapper.invoke(listOf(elem))
                     if (mapped.isTruthy()) mapped else null
                 })
@@ -1314,7 +1323,12 @@ object Builtins {
             is SetValue -> collection.elements.toList()
             is DictValue -> collection.entries.values.toList()
             is RangeValue -> collection.asSequence().toList()
-            is LazySequenceValue -> collection.toList()  // Materialize; will hang on infinite sequences
+            is LazySequenceValue -> {
+                if (!collection.isFinite()) {
+                    throw SantaRuntimeException("sum: cannot sum infinite lazy sequence (use take() first)")
+                }
+                collection.toList()
+            }
             else -> throw SantaRuntimeException("sum: expected collection, got ${collection.typeName()}")
         }
         if (items.isEmpty()) return IntValue(0)
@@ -1429,8 +1443,8 @@ object Builtins {
             is SetValue -> SetValue(collection.elements.drop(count).toPersistentSet())
             is RangeValue -> ListValue(collection.asSequence().drop(count).toList().toPersistentList())
             is LazySequenceValue -> {
-                // Return a new lazy sequence that skips the first count elements
-                LazySequenceValue.fromSequence(collection.asSequence().drop(count))
+                // Return a new lazy sequence that skips the first count elements, preserving finiteness
+                LazySequenceValue.withSameFiniteness(collection, collection.asSequence().drop(count))
             }
             else -> throw SantaRuntimeException("skip: expected collection, got ${collection.typeName()}")
         }
@@ -1836,7 +1850,7 @@ object Builtins {
             }
         }
 
-        return LazySequenceValue.fromSequence(generateCombinations(0, emptyList()))
+        return LazySequenceValue.fromFiniteSequence(generateCombinations(0, emptyList()))
     }
 
     /**
@@ -1929,7 +1943,12 @@ object Builtins {
         is DictValue -> collection.entries.values.toList()
         is StringValue -> toGraphemeList(collection.value).map { StringValue(it) }
         is RangeValue -> collection.asSequence().toList()
-        is LazySequenceValue -> collection.toList()  // Materialize; will hang on infinite sequences
+        is LazySequenceValue -> {
+            if (!collection.isFinite()) {
+                throw SantaRuntimeException("Cannot materialize infinite lazy sequence to list (use take() first)")
+            }
+            collection.toList()
+        }
         else -> emptyList()
     }
 
