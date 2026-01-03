@@ -1792,19 +1792,24 @@ class CodegenTest {
         }
 
         @Test
-        fun `aoc url reads from cache when available`() {
-            // Create a temporary cache file
-            val cacheDir = java.io.File(System.getProperty("user.home"), ".cache/santa-lang/aoc/9999")
-            val cacheFile = java.io.File(cacheDir, "day99.txt")
+        fun `aoc url reads from input file next to source`() {
+            // Create a temporary directory with a .input file
+            val tempDir = java.io.File(System.getProperty("java.io.tmpdir"), "santa-test-${System.currentTimeMillis()}")
+            val inputFile = java.io.File(tempDir, "aoc9999_day99.input")
+            val fakeSource = java.io.File(tempDir, "test.santa")
             try {
-                cacheDir.mkdirs()
-                cacheFile.writeText("cached input\n")
+                tempDir.mkdirs()
+                inputFile.writeText("cached input\n")
+
+                // Set sourceFilePath so the builtin knows where to look for .input files
+                santa.runtime.Builtins.sourceFilePath = fakeSource.absolutePath
 
                 val result = eval("read(\"aoc://9999/99\")") as StringValue
                 result.value shouldBe "cached input\n"
             } finally {
-                cacheFile.delete()
-                cacheDir.delete()
+                santa.runtime.Builtins.sourceFilePath = null
+                inputFile.delete()
+                tempDir.delete()
             }
         }
 
