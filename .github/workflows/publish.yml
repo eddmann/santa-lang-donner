@@ -1,0 +1,38 @@
+name: Publish
+
+on:
+  release:
+    types:
+      - published
+
+concurrency: publish
+
+jobs:
+  docker:
+    name: Publish Docker Image
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Download Docker tarball
+        run: |
+          gh release download ${{ github.event.release.tag_name }} \
+            -p 'santa-lang-donner-cli-*-docker.tar'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Load and tag image
+        run: |
+          docker load -i santa-lang-donner-cli-*-docker.tar
+          docker tag ghcr.io/eddmann/santa-lang-donner:cli-latest \
+                     ghcr.io/eddmann/santa-lang-donner:cli-${{ github.event.release.tag_name }}
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Push images
+        run: |
+          docker push ghcr.io/eddmann/santa-lang-donner:cli-latest
+          docker push ghcr.io/eddmann/santa-lang-donner:cli-${{ github.event.release.tag_name }}

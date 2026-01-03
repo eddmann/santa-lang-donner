@@ -1,0 +1,40 @@
+name: Test
+
+on:
+  push:
+    branches-ignore:
+      - draft-release
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      - name: Run CI checks
+        run: make can-release
+
+  update-draft-release-branch:
+    name: Update draft release branch
+    needs: test
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: alice-biometrics/github-push-action@v0.7.0
+        with:
+          github_token: ${{ secrets.RELEASE_TOKEN }}
+          branch: draft-release
+          force: true

@@ -1,0 +1,127 @@
+name: Build CLI
+
+on:
+  workflow_call:
+    inputs:
+      release-tag:
+        required: true
+        type: string
+
+jobs:
+  build-jar:
+    name: Build JAR
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      - name: Set version
+        run: |
+          sed -i 's/version = ".*"/version = "${{ inputs.release-tag }}"/' build.gradle.kts
+
+      - name: Build shadow JAR
+        run: ./gradlew :cli:shadowJar
+
+      - name: Upload JAR to release
+        run: |
+          mv cli/build/libs/cli-*-all.jar santa-lang-donner-cli-${{ inputs.release-tag }}.jar
+          gh release upload ${{ inputs.release-tag }} santa-lang-donner-cli-${{ inputs.release-tag }}.jar --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-native:
+    name: Build Native (${{ matrix.platform }})
+    needs: build-jar
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            platform: linux-amd64
+          - os: macos-15
+            platform: macos-arm64
+          - os: macos-15-intel
+            platform: macos-amd64
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      - name: Set version
+        run: |
+          sed -i'' -e 's/version = ".*"/version = "${{ inputs.release-tag }}"/' build.gradle.kts
+
+      - name: Build with jpackage
+        run: ./gradlew :cli:jpackage
+
+      - name: Package artifact
+        run: |
+          cd cli/build/jpackage
+          if [ -d "santa-cli.app" ]; then
+            tar -czvf santa-lang-donner-cli-${{ inputs.release-tag }}-${{ matrix.platform }}.tar.gz santa-cli.app
+          else
+            tar -czvf santa-lang-donner-cli-${{ inputs.release-tag }}-${{ matrix.platform }}.tar.gz santa-cli
+          fi
+
+      - name: Upload to release
+        run: |
+          gh release upload ${{ inputs.release-tag }} \
+            cli/build/jpackage/santa-lang-donner-cli-${{ inputs.release-tag }}-${{ matrix.platform }}.tar.gz \
+            --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  build-docker:
+    name: Build Docker
+    needs: build-jar
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download JAR from release
+        run: |
+          gh release download ${{ inputs.release-tag }} \
+            -p 'santa-lang-donner-cli-${{ inputs.release-tag }}.jar' \
+            -D cli/build/libs/
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: cli/Dockerfile
+          push: false
+          tags: ghcr.io/eddmann/santa-lang-donner:cli-latest
+          outputs: type=docker,dest=/tmp/santa-lang-donner-cli-docker.tar
+          build-args: |
+            JAR_FILE=cli/build/libs/santa-lang-donner-cli-${{ inputs.release-tag }}.jar
+
+      - name: Upload Docker tarball
+        run: |
+          mv /tmp/santa-lang-donner-cli-docker.tar \
+             santa-lang-donner-cli-${{ inputs.release-tag }}-docker.tar
+          gh release upload ${{ inputs.release-tag }} \
+            santa-lang-donner-cli-${{ inputs.release-tag }}-docker.tar \
+            --clobber
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
