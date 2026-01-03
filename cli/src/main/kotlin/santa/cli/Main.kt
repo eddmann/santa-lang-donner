@@ -202,4 +202,6 @@ private fun formatValue(value: Value): String = when (value) {
     is FunctionValue -> "<function>"
     is LazySequenceValue -> "<lazy-sequence>"
     is RangeValue -> "<range>"
+    is JavaClassValue -> "<class:${value.clazz.simpleName}>"
+    is JavaObjectValue -> "<java:${value.obj?.javaClass?.simpleName ?: "null"}>"
 }

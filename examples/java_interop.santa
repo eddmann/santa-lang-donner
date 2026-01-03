@@ -1,0 +1,152 @@
+// Java Interop Examples for santa-lang
+//
+// santa-lang provides functional-style Java interoperability through
+// combinator functions that integrate naturally with pipelines and composition.
+
+// =============================================================================
+// Loading Java Classes with `require`
+// =============================================================================
+
+let ArrayList = require("java.util.ArrayList")
+let StringBuilder = require("java.lang.StringBuilder")
+let MathClass = require("java.lang.Math")
+
+// =============================================================================
+// Creating Java Objects with `java_new`
+// =============================================================================
+
+// Create a new ArrayList
+let list = java_new(ArrayList)
+
+// Create with constructor arguments
+let sb = java_new(StringBuilder, "Hello")
+
+// You can also pass class name as string
+let list2 = java_new("java.util.ArrayList")
+
+// =============================================================================
+// Calling Instance Methods with `java_call`
+// =============================================================================
+
+// Call methods on Java objects
+let added = java_call(list, "add", 42)
+let listSize = java_call(list, "size")
+
+// Works on santa strings too (they're Java strings)
+let upper = java_call("hello", "toUpperCase")
+let sub = java_call("hello world", "substring", 0, 5)
+
+// =============================================================================
+// Calling Static Methods with `java_static`
+// =============================================================================
+
+// Call static methods on classes
+let absValue = java_static(MathClass, "abs", -42)
+let maxValue = java_static(MathClass, "max", 10, 20)
+
+// Can also use class name string
+let minValue = java_static("java.lang.Math", "min", 5, 3)
+
+// =============================================================================
+// Accessing Static Fields with `java_static_field`
+// =============================================================================
+
+let Integer = require("java.lang.Integer")
+let maxInt = java_static_field(Integer, "MAX_VALUE")
+
+let Boolean = require("java.lang.Boolean")
+let trueVal = java_static_field(Boolean, "TRUE")
+
+// =============================================================================
+// Method Combinators for Functional Style
+// =============================================================================
+
+// `method` creates a function from a method name
+let trimFn = method("trim")
+let toUpperFn = method("toUpperCase")
+
+// Use in pipelines
+let result1 = "  hello  " |> trimFn |> toUpperFn
+
+// Compose methods together
+let cleanFn = trimFn >> toUpperFn
+let result2 = "  world  " |> cleanFn
+
+// Partial application - pre-bind some arguments
+let splitByComma = method("split", ",")
+let parts = "a,b,c" |> splitByComma
+let partCount = parts |> size
+
+// =============================================================================
+// Static Method Combinators
+// =============================================================================
+
+// Create functions from static methods
+let absFn = static_method(MathClass, "abs")
+let maxFn = static_method(MathClass, "max")
+
+// Use in pipelines
+let absResult = -42 |> absFn
+
+// Use with higher-order functions
+let absSum = [-1, -2, -3, -4, -5] |> map(absFn) |> sum
+
+// =============================================================================
+// Constructor Combinators
+// =============================================================================
+
+// Create factory functions from constructors
+let newArrayList = constructor("java.util.ArrayList")
+let newStringBuilder = constructor("java.lang.StringBuilder")
+
+// Use like regular functions
+let myList = newArrayList()
+let mySb = newStringBuilder("Initial text")
+
+// =============================================================================
+// Composing Santa-lang and Java
+// =============================================================================
+
+// Functional string processing pipeline
+let process_strings = |strings| {
+    let trim = method("trim")
+    let toUpper = method("toUpperCase")
+    strings
+        |> map(trim >> toUpper)
+        |> filter(|s| java_call(s, "length") > 0)
+}
+
+// Test the pipeline
+let processed = process_strings(["  hello  ", "  world  ", "   "])
+
+// Mixed pipeline with Java and santa-lang
+let numbers = [-5, 3, -2, 8, -1]
+let numberAbsSum = numbers |> map(absFn) |> sum
+
+// =============================================================================
+// Working with Java Collections
+// =============================================================================
+
+// Create and populate a Java ArrayList
+let javaList = java_new(ArrayList)
+let added1 = java_call(javaList, "add", "one")
+let added2 = java_call(javaList, "add", "two")
+let added3 = java_call(javaList, "add", "three")
+
+// Get size
+let javaListSize = java_call(javaList, "size")
+
+// Check if empty
+let isEmpty = java_call(javaList, "isEmpty")
+
+// Convert to array for santa-lang processing
+let arr = java_call(javaList, "toArray")
+let upperArr = arr |> map(method("toUpperCase"))
+
+// =============================================================================
+// Final Result
+// =============================================================================
+
+["  hello  ", "  world  "]
+    |> map(method("trim") >> method("toUpperCase"))
+    |> first

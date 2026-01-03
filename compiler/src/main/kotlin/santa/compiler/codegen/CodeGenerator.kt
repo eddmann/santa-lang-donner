@@ -2693,7 +2693,7 @@ private open class ExpressionGenerator(
         val expectedArity = BUILTIN_ARITIES[name] ?: throw CodegenException("Unknown builtin: $name")
 
         // Special handling for variadic functions
-        if (name == "puts") {
+        if (name == "puts" || name in VARIADIC_JAVA_INTEROP) {
             // Create a Value[] array for varargs
             pushIntValue(plainArgs.size)
             mv.visitTypeInsn(ANEWARRAY, VALUE_TYPE)
@@ -2956,6 +2956,9 @@ private open class ExpressionGenerator(
             "id", "memoize",
             // External functions
             "read", "puts",
+            // Java Interop
+            "require", "java_new", "java_call", "java_static", "java_field",
+            "java_static_field", "method", "static_method", "constructor", "field_accessor",
         )
 
         /** Arity of each builtin function for partial application support. */
@@ -2988,6 +2991,16 @@ private open class ExpressionGenerator(
             "update_d" to 4,
             // Variadic (-1 indicates variadic)
             "puts" to -1,
+            // Java Interop
+            "require" to 1, "java_field" to 2, "java_static_field" to 2, "field_accessor" to 1,
+            "java_new" to -1, "java_call" to -1, "java_static" to -1,
+            "method" to -1, "static_method" to -1, "constructor" to -1,
+        )
+
+        /** Variadic Java interop functions that take Value[] as varargs. */
+        val VARIADIC_JAVA_INTEROP = setOf(
+            "java_new", "java_call", "java_static",
+            "method", "static_method", "constructor",
         )
     }
 }

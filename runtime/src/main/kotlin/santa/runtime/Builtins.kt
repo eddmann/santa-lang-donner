@@ -2027,6 +2027,8 @@ object Builtins {
         is FunctionValue -> "<function>"
         is LazySequenceValue -> "<lazy-sequence>"
         is RangeValue -> "<range>"
+        is JavaClassValue -> "<class:${value.clazz.simpleName}>"
+        is JavaObjectValue -> "<java:${value.obj?.javaClass?.simpleName ?: "null"}>"
     }
 
     /**
@@ -2108,6 +2110,242 @@ object Builtins {
         }
 
         return null
+    }
+
+    // =========================================================================
+    // Java Interop Combinators
+    // =========================================================================
+
+    /**
+     * require(className) - Load a Java class by name.
+     *
+     * Returns a JavaClassValue that can be used with `java_new`, `java_static`, etc.
+     *
+     * Example:
+     *   let ArrayList = require("java.util.ArrayList")
+     *   let Math = require("java.lang.Math")
+     */
+    @JvmStatic
+    fun require(className: Value): Value {
+        val name = when (className) {
+            is StringValue -> className.value
+            else -> throw SantaRuntimeException("require: expected String class name, got ${className.typeName()}")
+        }
+        return JavaClassValue(JavaInterop.loadClass(name))
+    }
+
+    /**
+     * java_new(class, args...) - Construct a new Java object.
+     *
+     * Takes a JavaClassValue (from require) or class name string and constructor arguments.
+     *
+     * Example:
+     *   let ArrayList = require("java.util.ArrayList")
+     *   let list = java_new(ArrayList)
+     *   let list2 = java_new(ArrayList, 10)  // with initial capacity
+     */
+    @JvmStatic
+    fun java_new(vararg args: Value): Value {
+        if (args.isEmpty()) {
+            throw SantaRuntimeException("java_new: requires at least one argument (class)")
+        }
+        val clazz = when (val first = args[0]) {
+            is JavaClassValue -> first.clazz
+            is StringValue -> JavaInterop.loadClass(first.value)
+            else -> throw SantaRuntimeException("java_new: first argument must be Class or String, got ${first.typeName()}")
+        }
+        val constructorArgs = args.drop(1)
+        return JavaInterop.construct(clazz, constructorArgs)
+    }
+
+    /**
+     * java_call(target, methodName, args...) - Call an instance method on a Java object.
+     *
+     * Example:
+     *   let list = java_new(ArrayList)
+     *   java_call(list, "add", 42)
+     *   let size = java_call(list, "size")
+     */
+    @JvmStatic
+    fun java_call(vararg args: Value): Value {
+        if (args.size < 2) {
+            throw SantaRuntimeException("java_call: requires at least 2 arguments (target, methodName)")
+        }
+        val target = args[0]
+        val methodName = when (val m = args[1]) {
+            is StringValue -> m.value
+            else -> throw SantaRuntimeException("java_call: method name must be String, got ${m.typeName()}")
+        }
+        val methodArgs = args.drop(2)
+        return JavaInterop.invokeMethod(target, methodName, methodArgs)
+    }
+
+    /**
+     * java_static(class, methodName, args...) - Call a static method on a Java class.
+     *
+     * Example:
+     *   let Math = require("java.lang.Math")
+     *   let max = java_static(Math, "max", 10, 20)
+     *   let abs = java_static(Math, "abs", -42)
+     */
+    @JvmStatic
+    fun java_static(vararg args: Value): Value {
+        if (args.size < 2) {
+            throw SantaRuntimeException("java_static: requires at least 2 arguments (class, methodName)")
+        }
+        val clazz = when (val first = args[0]) {
+            is JavaClassValue -> first.clazz
+            is StringValue -> JavaInterop.loadClass(first.value)
+            else -> throw SantaRuntimeException("java_static: first argument must be Class or String, got ${first.typeName()}")
+        }
+        val methodName = when (val m = args[1]) {
+            is StringValue -> m.value
+            else -> throw SantaRuntimeException("java_static: method name must be String, got ${m.typeName()}")
+        }
+        val methodArgs = args.drop(2)
+        return JavaInterop.invokeStatic(clazz, methodName, methodArgs)
+    }
+
+    /**
+     * java_field(target, fieldName) - Get a field value from a Java object.
+     *
+     * Example:
+     *   let point = java_new(require("java.awt.Point"), 10, 20)
+     *   let x = java_field(point, "x")
+     */
+    @JvmStatic
+    fun java_field(target: Value, fieldName: Value): Value {
+        val name = when (fieldName) {
+            is StringValue -> fieldName.value
+            else -> throw SantaRuntimeException("java_field: field name must be String, got ${fieldName.typeName()}")
+        }
+        return JavaInterop.getField(target, name)
+    }
+
+    /**
+     * java_static_field(class, fieldName) - Get a static field value from a Java class.
+     *
+     * Example:
+     *   let Integer = require("java.lang.Integer")
+     *   let maxInt = java_static_field(Integer, "MAX_VALUE")
+     */
+    @JvmStatic
+    fun java_static_field(clazz: Value, fieldName: Value): Value {
+        val javaClass = when (clazz) {
+            is JavaClassValue -> clazz.clazz
+            is StringValue -> JavaInterop.loadClass(clazz.value)
+            else -> throw SantaRuntimeException("java_static_field: first argument must be Class or String, got ${clazz.typeName()}")
+        }
+        val name = when (fieldName) {
+            is StringValue -> fieldName.value
+            else -> throw SantaRuntimeException("java_static_field: field name must be String, got ${fieldName.typeName()}")
+        }
+        return JavaInterop.getStaticField(javaClass, name)
+    }
+
+    /**
+     * method(name, args...) - Create a function that calls a method on its first argument.
+     *
+     * This is the key combinator for functional-style Java interop.
+     * Returns a FunctionValue that can be used in pipelines and composition.
+     *
+     * Example:
+     *   let toUpper = method("toUpperCase")
+     *   "hello" |> toUpper  // "HELLO"
+     *
+     *   let split = method("split", ",")
+     *   "a,b,c" |> split  // ["a", "b", "c"]
+     *
+     *   ["hello", "world"] |> map(method("toUpperCase"))  // ["HELLO", "WORLD"]
+     */
+    @JvmStatic
+    fun method(vararg args: Value): Value {
+        if (args.isEmpty()) {
+            throw SantaRuntimeException("method: requires at least one argument (method name)")
+        }
+        val methodName = when (val m = args[0]) {
+            is StringValue -> m.value
+            else -> throw SantaRuntimeException("method: first argument must be String, got ${m.typeName()}")
+        }
+        val partialArgs = args.drop(1)
+        return JavaMethodValue(methodName, partialArgs)
+    }
+
+    /**
+     * static_method(class, name, args...) - Create a function that calls a static method.
+     *
+     * Returns a FunctionValue that can be used in pipelines and composition.
+     *
+     * Example:
+     *   let Math = require("java.lang.Math")
+     *   let abs = static_method(Math, "abs")
+     *   -42 |> abs  // 42
+     *
+     *   let max = static_method(Math, "max")
+     *   max(10, 20)  // 20
+     */
+    @JvmStatic
+    fun static_method(vararg args: Value): Value {
+        if (args.size < 2) {
+            throw SantaRuntimeException("static_method: requires at least 2 arguments (class, method name)")
+        }
+        val clazz = when (val first = args[0]) {
+            is JavaClassValue -> first.clazz
+            is StringValue -> JavaInterop.loadClass(first.value)
+            else -> throw SantaRuntimeException("static_method: first argument must be Class or String, got ${first.typeName()}")
+        }
+        val methodName = when (val m = args[1]) {
+            is StringValue -> m.value
+            else -> throw SantaRuntimeException("static_method: second argument must be String, got ${m.typeName()}")
+        }
+        val partialArgs = args.drop(2)
+        return JavaStaticMethodValue(clazz, methodName, partialArgs)
+    }
+
+    /**
+     * constructor(class, args...) - Create a function that constructs instances.
+     *
+     * Returns a FunctionValue that creates new instances when called.
+     *
+     * Example:
+     *   let ArrayList = constructor(require("java.util.ArrayList"))
+     *   let list1 = ArrayList()
+     *   let list2 = ArrayList(10)  // with capacity
+     *
+     *   // Or directly
+     *   let StringBuilder = constructor("java.lang.StringBuilder")
+     *   let sb = StringBuilder("Hello")
+     */
+    @JvmStatic
+    fun constructor(vararg args: Value): Value {
+        if (args.isEmpty()) {
+            throw SantaRuntimeException("constructor: requires at least one argument (class)")
+        }
+        val clazz = when (val first = args[0]) {
+            is JavaClassValue -> first.clazz
+            is StringValue -> JavaInterop.loadClass(first.value)
+            else -> throw SantaRuntimeException("constructor: first argument must be Class or String, got ${first.typeName()}")
+        }
+        val partialArgs = args.drop(1)
+        return JavaConstructorValue(clazz, partialArgs)
+    }
+
+    /**
+     * field_accessor(name) - Create a function that accesses a field on its argument.
+     *
+     * Returns a FunctionValue that can be used in pipelines.
+     *
+     * Example:
+     *   let getX = field_accessor("x")
+     *   point |> getX  // gets point.x
+     */
+    @JvmStatic
+    fun field_accessor(name: Value): Value {
+        val fieldName = when (name) {
+            is StringValue -> name.value
+            else -> throw SantaRuntimeException("field_accessor: argument must be String, got ${name.typeName()}")
+        }
+        return JavaFieldAccessorValue(fieldName)
     }
 
     /**
@@ -2203,6 +2441,17 @@ object Builtins {
         // Utility
         "id" to BuiltinInfo(1, Builtins::id),
         "memoize" to BuiltinInfo(1, Builtins::memoize),
+        // Java Interop
+        "require" to BuiltinInfo(1, Builtins::require),
+        "java_new" to BuiltinInfo(-1, Builtins::java_new),  // variadic
+        "java_call" to BuiltinInfo(-1, Builtins::java_call),  // variadic
+        "java_static" to BuiltinInfo(-1, Builtins::java_static),  // variadic
+        "java_field" to BuiltinInfo(2, Builtins::java_field),
+        "java_static_field" to BuiltinInfo(2, Builtins::java_static_field),
+        "method" to BuiltinInfo(-1, Builtins::method),  // variadic
+        "static_method" to BuiltinInfo(-1, Builtins::static_method),  // variadic
+        "constructor" to BuiltinInfo(-1, Builtins::constructor),  // variadic
+        "field_accessor" to BuiltinInfo(1, Builtins::field_accessor),
     )
 }
 
@@ -2350,6 +2599,18 @@ class BuiltinFunctionValue(val name: String) : FunctionValue(
 
             // 4-arity functions
             "update_d" -> Builtins.update_d(args[0], args[1], args[2], args[3])
+
+            // Java Interop (variadic)
+            "require" -> Builtins.require(args[0])
+            "java_new" -> Builtins.java_new(*args.toTypedArray())
+            "java_call" -> Builtins.java_call(*args.toTypedArray())
+            "java_static" -> Builtins.java_static(*args.toTypedArray())
+            "java_field" -> Builtins.java_field(args[0], args[1])
+            "java_static_field" -> Builtins.java_static_field(args[0], args[1])
+            "method" -> Builtins.method(*args.toTypedArray())
+            "static_method" -> Builtins.static_method(*args.toTypedArray())
+            "constructor" -> Builtins.constructor(*args.toTypedArray())
+            "field_accessor" -> Builtins.field_accessor(args[0])
 
             else -> throw SantaRuntimeException("Builtin not yet supported as first-class value: $name")
         }

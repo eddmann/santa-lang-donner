@@ -612,3 +612,60 @@ class ReturnException(@JvmField val value: Value) : Throwable(null, null, false,
  * The break value becomes the result of the enclosing iteration expression.
  */
 class BreakException(@JvmField val value: Value) : Throwable(null, null, false, false)
+
+// =============================================================================
+// Java Interop Value Types
+// =============================================================================
+
+/**
+ * Wrapper for Java Class references used in interop.
+ *
+ * Enables santa-lang to reference Java classes for constructing objects,
+ * calling static methods, and accessing static fields.
+ *
+ * Created by the `require` builtin: `let ArrayList = require("java.util.ArrayList")`
+ */
+class JavaClassValue(val clazz: Class<*>) : Value {
+    override fun isTruthy(): Boolean = true
+    override fun isHashable(): Boolean = true
+    override fun typeName(): String = "Class<${clazz.simpleName}>"
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is JavaClassValue) return false
+        return clazz == other.clazz
+    }
+
+    override fun hashCode(): Int = clazz.hashCode()
+
+    override fun toString(): String = "JavaClassValue(${clazz.name})"
+}
+
+/**
+ * Wrapper for arbitrary Java objects from interop.
+ *
+ * Enables santa-lang to hold references to Java objects and interact
+ * with them via reflection-based method calls and field access.
+ *
+ * Created when Java methods return objects, or by the `java_new` builtin.
+ */
+class JavaObjectValue(val obj: Any?) : Value {
+    override fun isTruthy(): Boolean = obj != null
+    override fun isHashable(): Boolean = obj != null && isSimpleType(obj)
+    override fun typeName(): String = if (obj != null) "Java<${obj.javaClass.simpleName}>" else "Java<null>"
+
+    private fun isSimpleType(o: Any): Boolean = when (o) {
+        is String, is Number, is Boolean, is Char -> true
+        else -> false
+    }
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is JavaObjectValue) return false
+        return obj == other.obj
+    }
+
+    override fun hashCode(): Int = obj?.hashCode() ?: 0
+
+    override fun toString(): String = "JavaObjectValue($obj)"
+}

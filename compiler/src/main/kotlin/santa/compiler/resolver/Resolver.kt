@@ -393,6 +393,17 @@ class Resolver(
             "read",
             "puts",
             "env",
+            // Java interop
+            "require",
+            "java_new",
+            "java_call",
+            "java_static",
+            "java_field",
+            "java_static_field",
+            "method",
+            "static_method",
+            "constructor",
+            "field_accessor",
         )
     }
 
