@@ -9,6 +9,7 @@ import santa.runtime.value.*
  */
 data class TestCaseResult(
     val testIndex: Int,
+    val isSlow: Boolean,
     val partOnePassed: Boolean?,
     val partTwoPassed: Boolean?,
     val partOneExpected: Value?,
@@ -53,6 +54,7 @@ class TestRunner(
             if (testBlock !is TestBlockExpr) {
                 results.add(TestCaseResult(
                     testIndex = index + 1,
+                    isSlow = testSection.isSlow,
                     partOnePassed = null,
                     partTwoPassed = null,
                     partOneExpected = null,
@@ -66,6 +68,7 @@ class TestRunner(
 
             val result = runSingleTest(
                 testIndex = index + 1,
+                isSlow = testSection.isSlow,
                 testBlock = testBlock,
                 partOneExpr = partOneSectionExpr,
                 partTwoExpr = partTwoSectionExpr,
@@ -79,6 +82,7 @@ class TestRunner(
 
     private fun runSingleTest(
         testIndex: Int,
+        isSlow: Boolean,
         testBlock: TestBlockExpr,
         partOneExpr: Expr?,
         partTwoExpr: Expr?,
@@ -93,6 +97,7 @@ class TestRunner(
             if (testInputEntry == null) {
                 return TestCaseResult(
                     testIndex = testIndex,
+                    isSlow = isSlow,
                     partOnePassed = null,
                     partTwoPassed = null,
                     partOneExpected = null,
@@ -159,6 +164,7 @@ class TestRunner(
 
             return TestCaseResult(
                 testIndex = testIndex,
+                isSlow = isSlow,
                 partOnePassed = partOnePassed,
                 partTwoPassed = partTwoPassed,
                 partOneExpected = partOneExpectedValue,
@@ -169,6 +175,7 @@ class TestRunner(
         } catch (e: Exception) {
             return TestCaseResult(
                 testIndex = testIndex,
+                isSlow = isSlow,
                 partOnePassed = null,
                 partTwoPassed = null,
                 partOneExpected = null,

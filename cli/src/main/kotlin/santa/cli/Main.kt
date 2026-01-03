@@ -3,7 +3,6 @@ package santa.cli
 import santa.compiler.codegen.Compiler
 import santa.compiler.error.ErrorFormatter
 import santa.compiler.error.SantaException
-import santa.compiler.lexer.SourcePosition
 import santa.compiler.parser.Section
 import santa.compiler.parser.TestBlockExpr
 import santa.runtime.Builtins
@@ -12,21 +11,40 @@ import santa.runtime.value.*
 import java.io.File
 import kotlin.system.exitProcess
 
+// Version info
+private const val VERSION = "0.1.0"
+
+// ANSI escape codes for terminal formatting
+private const val ANSI_RESET = "\u001b[0m"
+private const val ANSI_UNDERLINE = "\u001b[4m"
+private const val ANSI_GREEN = "\u001b[32m"
+private const val ANSI_RED = "\u001b[31m"
+private const val ANSI_YELLOW = "\u001b[33m"
+
 /**
  * Santa-lang CLI entry point.
- *
- * Usage:
- *   santa <file.santa>          - Run a Santa-lang source file
- *   santa -t <file.santa>       - Run tests only
- *   santa -h | --help           - Show help
  */
 fun main(args: Array<String>) {
-    if (args.isEmpty() || args.contains("-h") || args.contains("--help")) {
-        printUsage()
-        exitProcess(if (args.isEmpty()) 1 else 0)
+    // Check -h/--help first
+    if (args.contains("-h") || args.contains("--help")) {
+        printHelp()
+        exitProcess(0)
     }
 
-    val filePath = args.last()
+    // Check -v/--version
+    if (args.contains("-v") || args.contains("--version")) {
+        println("santa-lang Donner $VERSION")
+        exitProcess(0)
+    }
+
+    // Need a file argument
+    val nonFlagArgs = args.filter { !it.startsWith("-") }
+    if (nonFlagArgs.isEmpty()) {
+        printHelp()
+        exitProcess(1)
+    }
+
+    val filePath = nonFlagArgs.last()
     val runTests = args.contains("-t") || args.contains("--test")
     val includeSlow = args.contains("-s") || args.contains("--slow")
 
@@ -54,11 +72,11 @@ fun main(args: Array<String>) {
     } catch (e: SantaRuntimeException) {
         // Runtime errors without source context (position not available)
         System.err.println(ErrorFormatter.format(e.message ?: "Unknown error", null, null, "RuntimeError"))
-        exitProcess(1)
+        exitProcess(2)
     } catch (e: Exception) {
         // Unexpected errors
         System.err.println("Error: ${e.message}")
-        exitProcess(1)
+        exitProcess(2)
     }
 }
 
@@ -85,61 +103,59 @@ private fun runTestMode(source: String, includeSlow: Boolean) {
     val runner = TestRunner(program, includeSlow)
     val results = runner.runTests()
 
-    var allPassed = true
-    var passCount = 0
-    var failCount = 0
+    var exitCode = 0
 
-    for (result in results) {
-        val prefix = "Test ${result.testIndex}"
+    for ((index, result) in results.withIndex()) {
+        // Print blank line before each test case (except first) - matches Comet
+        if (index > 0) {
+            println()
+        }
+
+        // Print underlined header with optional (slow) tag - matches Comet
+        if (result.isSlow) {
+            println("${ANSI_UNDERLINE}Testcase #${result.testIndex}${ANSI_RESET} ${ANSI_YELLOW}(slow)${ANSI_RESET}")
+        } else {
+            println("${ANSI_UNDERLINE}Testcase #${result.testIndex}${ANSI_RESET}")
+        }
 
         if (result.error != null) {
-            println("$prefix: ERROR - ${result.error}")
-            allPassed = false
-            failCount++
+            println("${ANSI_RED}Error: ${result.error}${ANSI_RESET}")
+            exitCode = 3
             continue
         }
 
-        val partOneStatus = when (result.partOnePassed) {
-            true -> { passCount++; "PASS" }
-            false -> { failCount++; allPassed = false; "FAIL" }
-            null -> null
+        // Check if no expectations
+        if (result.partOnePassed == null && result.partTwoPassed == null) {
+            println("No expectations")
+            continue
         }
 
-        val partTwoStatus = when (result.partTwoPassed) {
-            true -> { passCount++; "PASS" }
-            false -> { failCount++; allPassed = false; "FAIL" }
-            null -> null
-        }
-
-        val parts = buildList {
-            if (partOneStatus != null) {
-                add("part_one: $partOneStatus")
-                if (result.partOnePassed == false) {
-                    add("  expected: ${formatValue(result.partOneExpected!!)}")
-                    add("  actual:   ${formatValue(result.partOneActual!!)}")
-                }
-            }
-            if (partTwoStatus != null) {
-                add("part_two: $partTwoStatus")
-                if (result.partTwoPassed == false) {
-                    add("  expected: ${formatValue(result.partTwoExpected!!)}")
-                    add("  actual:   ${formatValue(result.partTwoActual!!)}")
-                }
+        // Part 1
+        if (result.partOnePassed != null) {
+            val actual = formatValue(result.partOneActual!!)
+            if (result.partOnePassed == true) {
+                println("Part 1: $actual ${ANSI_GREEN}✔${ANSI_RESET}")
+            } else {
+                val expected = formatValue(result.partOneExpected!!)
+                println("Part 1: $actual ${ANSI_RED}✘ (Expected: $expected)${ANSI_RESET}")
+                exitCode = 3
             }
         }
 
-        if (parts.isEmpty()) {
-            println("$prefix: (no expectations)")
-        } else {
-            println("$prefix:")
-            parts.forEach { println("  $it") }
+        // Part 2
+        if (result.partTwoPassed != null) {
+            val actual = formatValue(result.partTwoActual!!)
+            if (result.partTwoPassed == true) {
+                println("Part 2: $actual ${ANSI_GREEN}✔${ANSI_RESET}")
+            } else {
+                val expected = formatValue(result.partTwoExpected!!)
+                println("Part 2: $actual ${ANSI_RED}✘ (Expected: $expected)${ANSI_RESET}")
+                exitCode = 3
+            }
         }
     }
 
-    println()
-    println("Results: $passCount passed, $failCount failed")
-
-    exitProcess(if (allPassed) 0 else 1)
+    exitProcess(exitCode)
 }
 
 private fun runNormalMode(source: String) {
@@ -158,26 +174,26 @@ private fun runNormalMode(source: String) {
     exitProcess(0)
 }
 
-private fun printUsage() {
-    println("""
-        santa-lang CLI
+private fun printHelp() {
+    println("""santa-lang CLI - Donner $VERSION
 
-        Usage:
-          santa <file.santa>          Run a Santa-lang source file
-          santa -t <file.santa>       Run tests only
-          santa -s -t <file.santa>    Run tests including slow tests
-          santa -h | --help           Show this help
+USAGE:
+    santa-cli <SCRIPT>              Run solution file
+    santa-cli -t <SCRIPT>           Run test suite
+    santa-cli -t -s <SCRIPT>        Run tests including @slow
+    santa-cli -h                    Show this help
 
-        Exit codes:
-          0  Success
-          1  Error (file not found, parse error, runtime error)
-    """.trimIndent())
+OPTIONS:
+    -t, --test           Run the solution's test suite
+    -s, --slow           Include @slow tests (use with -t)
+    -h, --help           Show this help message
+    -v, --version        Display version information""")
 }
 
 private fun formatValue(value: Value): String = when (value) {
     is IntValue -> value.value.toString()
     is DecimalValue -> value.value.toString()
-    is StringValue -> value.value
+    is StringValue -> "\"${value.value}\""
     is BoolValue -> value.value.toString()
     is NilValue -> "nil"
     is ListValue -> "[" + (0 until value.size()).map { formatValue(value.get(it)) }.joinToString(", ") + "]"

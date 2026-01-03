@@ -4,6 +4,7 @@ plugins {
 
 application {
     mainClass.set("santa.cli.MainKt")
+    applicationName = "santa-cli"
 }
 
 dependencies {
