@@ -62,6 +62,10 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v3
 
+      - name: Install jpackage dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y fakeroot binutils
+
       - name: Set version
         run: |
           sed -i'' -e 's/version = ".*"/version = "${{ inputs.release-tag }}"/' build.gradle.kts
