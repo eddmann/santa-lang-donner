@@ -71,7 +71,7 @@ jobs:
           sed -i'' -e 's/version = ".*"/version = "${{ inputs.release-tag }}"/' build.gradle.kts
 
       - name: Build with jpackage
-        run: ./gradlew :cli:jpackage --info
+        run: ./gradlew :cli:jpackage
 
       - name: Package artifact
         run: |

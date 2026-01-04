@@ -59,8 +59,4 @@ tasks.jpackage {
     windows {
         winConsole = true
     }
-
-    linux {
-        linuxPackageName = "santa-cli"
-    }
 }
