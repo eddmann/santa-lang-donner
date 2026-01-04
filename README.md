@@ -35,6 +35,31 @@ Source Code → Lexer → Parser → Desugar → Resolver → Bytecode Gen (ASM)
 | **Bytecode Gen** | Generates JVM bytecode using ASM                        |
 | **Runtime**      | Value types, operators, and 70+ built-in functions      |
 
+## Java Interop
+
+Donner provides access to the full JVM ecosystem through functional-style interop:
+
+| Function                             | Description                                |
+| ------------------------------------ | ------------------------------------------ |
+| `require(class)`                     | Load a Java class                          |
+| `java_new(class, args...)`           | Construct objects                          |
+| `java_call(obj, method, args...)`    | Call instance methods                      |
+| `java_static(class, method, args...)` | Call static methods                        |
+| `method(name)`                       | Create pipeline-compatible method function |
+| `static_method(class, name)`         | Create static method function              |
+
+```santa
+let Math = require("java.lang.Math")
+let abs = static_method(Math, "abs")
+
+[-5, 3, -2, 8, -1] |> map(abs) |> sum  // 19
+
+// Method combinators work in pipelines
+"  hello  " |> method("trim") |> method("toUpperCase")  // "HELLO"
+```
+
+See [`examples/java_interop.santa`](examples/java_interop.santa) for comprehensive examples.
+
 ## Installation
 
 ### Docker
