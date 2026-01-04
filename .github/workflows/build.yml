@@ -27,6 +27,8 @@ jobs:
   build-cli:
     name: Build CLI
     needs: update-draft-release
+    permissions:
+      contents: write
     uses: ./.github/workflows/build-cli.yml
     with:
       release-tag: ${{ needs.update-draft-release.outputs.tag_name }}
