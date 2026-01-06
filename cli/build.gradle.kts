@@ -2,6 +2,7 @@ plugins {
     application
     id("org.panteleyev.jpackageplugin")
     id("com.gradleup.shadow")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 application {
@@ -13,6 +14,7 @@ dependencies {
     implementation(project(":compiler"))
     implementation(project(":runtime"))
     implementation("org.jetbrains.kotlinx:kotlinx-collections-immutable:0.3.7")
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.3")
 }
 
 // Shadow JAR for fat JAR distribution

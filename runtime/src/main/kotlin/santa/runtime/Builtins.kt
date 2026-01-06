@@ -2003,15 +2003,37 @@ object Builtins {
     }
 
     /**
+     * Hook for capturing puts output (set by CLI for JSON/JSONL modes).
+     * When non-null, puts() calls this instead of printing to stdout.
+     */
+    @JvmStatic
+    var putsHook: ((String) -> Unit)? = null
+
+    /**
      * puts(...values) - Prints values to stdout.
      *
      * Multiple values are separated by spaces.
      * Returns nil.
+     *
+     * Per LANG.txt Section 16.3.4: If puts() is called with no arguments,
+     * no console event is emitted.
      */
     @JvmStatic
     fun puts(vararg values: Value): Value {
+        // Per spec, puts() with no arguments emits nothing
+        if (values.isEmpty()) {
+            return NilValue
+        }
+
         val output = values.joinToString(" ") { valueToString(it) }
-        println(output)
+
+        val hook = putsHook
+        if (hook != null) {
+            hook(output)
+        } else {
+            println(output)
+        }
+
         return NilValue
     }
 
