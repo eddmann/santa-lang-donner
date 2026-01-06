@@ -9,21 +9,30 @@ This is **Donner**, a santa-lang reindeer implementation. santa-lang is a functi
 - Batteries-included standard library for AoC patterns
 - Java interop: `java_new`, `java_call`, `java_static`, method combinators
 
+## Makefile
+
+**Always use Makefile targets.** Never run build tools directly.
+
+- Run `make help` to see all available targets
+- `make fmt` for code formatting
+- `make test` for running tests
+- `make can-release` before submitting a PR (runs all checks)
+
+This ensures consistent, reproducible builds across all environments.
+
 ## Setup
 
 Requires Java 21+:
 
 ```bash
-./gradlew :cli:build    # Build CLI
-./gradlew test          # Run all tests
-./gradlew :cli:run --args="solution.santa"      # Run script
-./gradlew :cli:run --args="-t solution.santa"   # Run tests
+make build              # Build CLI
+make test               # Run all tests
 ```
 
 ## Common Commands
 
 ```bash
-make help               # Show all targets
+make help               # Show available targets
 make build              # Build CLI
 make test               # Run all tests
 make clean              # Clean build artifacts
@@ -32,7 +41,7 @@ make run-test FILE=<path>  # Run in test mode
 make cli/jar            # Build fat JAR (shadowJar)
 make cli/jpackage       # Build native binary
 make docker/build       # Build Docker image
-make can-release        # Run all checks
+make can-release        # Run before submitting PR (all checks)
 ```
 
 ## Code Conventions
@@ -45,11 +54,6 @@ make can-release        # Run all checks
 - **Bytecode**: ASM 9.7 for direct `.class` generation
 
 ## Tests & CI
-
-```bash
-./gradlew test          # All tests
-./gradlew test --tests 'santa.compiler.lexer.*'  # Specific tests
-```
 
 - **CI** (`test.yml`): Runs `make can-release` on ubuntu-24.04 with Java 21
 - **Build** (`build-cli.yml`): JAR + native binaries (linux-amd64, macos-amd64/arm64), Docker
