@@ -25,6 +25,11 @@ tasks.shadowJar {
     }
 }
 
+// Integration tests require the shadow JAR to be built first
+tasks.test {
+    dependsOn(tasks.shadowJar)
+}
+
 // Copy JARs for jpackage input
 tasks.register<Copy>("copyDependencies") {
     from(configurations.runtimeClasspath)

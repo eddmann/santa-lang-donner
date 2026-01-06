@@ -1,0 +1,10 @@
+input: "x"
+
+part_one: {
+    99
+}
+
+test: {
+    input: "x"
+    part_one: 42
+}

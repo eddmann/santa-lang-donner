@@ -73,7 +73,13 @@ class Parser(private val tokens: List<Token>) {
             if (isSlow) {
                 throw error(nameToken, "@slow attribute can only be applied to test sections")
             }
-            parseExpression(0)
+            // For part_one, part_two, input sections, if body starts with {, parse as block
+            // This matches Comet/Prancer behavior where { } after section name is always a block
+            if (nameToken.lexeme in setOf("part_one", "part_two", "input") && check(TokenType.LBRACE)) {
+                parseBlockExpression()
+            } else {
+                parseExpression(0)
+            }
         }
 
         return Section(nameToken.lexeme, expr, isSlow, spanFrom(nameToken.span, expr.span))
