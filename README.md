@@ -10,12 +10,12 @@ santa-lang is a functional, expression-oriented programming language designed fo
 
 All santa-lang implementations support the same language features:
 
-- Tail-call optimization (TCO)
+- First-class functions and closures with tail-call optimization
+- Pipeline and composition operators for expressive data flow
 - Persistent immutable data structures
-- First-class functions and closures
 - Lazy sequences and infinite ranges
 - Pattern matching with guards
-- [70+ built-in functions](https://eddmann.com/santa-lang/builtins/)
+- [Rich built-in function library](https://eddmann.com/santa-lang/builtins/)
 - AoC runner with automatic input fetching
 
 ## Architecture
@@ -33,20 +33,22 @@ Source Code → Lexer → Parser → Desugar → Resolver → Bytecode Gen (ASM)
 | **Desugar**      | Transforms placeholders, pipelines, pattern parameters  |
 | **Resolver**     | Lexical scoping and symbol resolution                   |
 | **Bytecode Gen** | Generates JVM bytecode using ASM                        |
-| **Runtime**      | Value types, operators, and 70+ built-in functions      |
+| **Runtime**      | Value types, operators, and built-in functions          |
+
+For detailed implementation internals, see [ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Java Interop
 
 Donner provides access to the full JVM ecosystem through functional-style interop:
 
-| Function                             | Description                                |
-| ------------------------------------ | ------------------------------------------ |
-| `require(class)`                     | Load a Java class                          |
-| `java_new(class, args...)`           | Construct objects                          |
-| `java_call(obj, method, args...)`    | Call instance methods                      |
+| Function                              | Description                                |
+| ------------------------------------- | ------------------------------------------ |
+| `require(class)`                      | Load a Java class                          |
+| `java_new(class, args...)`            | Construct objects                          |
+| `java_call(obj, method, args...)`     | Call instance methods                      |
 | `java_static(class, method, args...)` | Call static methods                        |
-| `method(name)`                       | Create pipeline-compatible method function |
-| `static_method(class, name)`         | Create static method function              |
+| `method(name)`                        | Create pipeline-compatible method function |
+| `static_method(class, name)`          | Create static method function              |
 
 ```santa
 let Math = require("java.lang.Math")
@@ -82,12 +84,12 @@ java -jar santa-lang-donner-cli-{version}.jar solution.santa
 
 Download pre-built binaries from [GitHub Releases](https://github.com/eddmann/santa-lang-donner/releases):
 
-| Platform              | Artifact                                              |
-| --------------------- | ----------------------------------------------------- |
-| JAR (all platforms)   | `santa-lang-donner-cli-{version}.jar`                 |
-| Linux (x86_64)        | `santa-lang-donner-cli-{version}-linux-amd64.tar.gz`  |
-| macOS (Intel)         | `santa-lang-donner-cli-{version}-macos-amd64.tar.gz`  |
-| macOS (Apple Silicon) | `santa-lang-donner-cli-{version}-macos-arm64.tar.gz`  |
+| Platform              | Artifact                                             |
+| --------------------- | ---------------------------------------------------- |
+| JAR (all platforms)   | `santa-lang-donner-cli-{version}.jar`                |
+| Linux (x86_64)        | `santa-lang-donner-cli-{version}-linux-amd64.tar.gz` |
+| macOS (Intel)         | `santa-lang-donner-cli-{version}-macos-amd64.tar.gz` |
+| macOS (Apple Silicon) | `santa-lang-donner-cli-{version}-macos-arm64.tar.gz` |
 
 ## Usage
 
@@ -142,16 +144,19 @@ Requires Java 21+:
 
 ```bash
 # Build CLI
-./gradlew :cli:build
+make build
 
 # Run tests
-./gradlew test
+make test
 
 # Build fat JAR
-./gradlew :cli:shadowJar
+make cli/jar
 
 # Build native binary (current platform)
-./gradlew :cli:jpackage
+make cli/jpackage
+
+# Build Docker image
+make docker/build
 ```
 
 ## Development
@@ -190,12 +195,15 @@ make docker/build  # Build Docker image
 └── .github/workflows/     # CI/CD pipelines
 ```
 
-## See Also
+## Other Reindeer
 
-- [eddmann/santa-lang](https://github.com/eddmann/santa-lang) - Language specification/documentation
-- [eddmann/santa-lang-editor](https://github.com/eddmann/santa-lang-editor) - Web-based editor
-- [eddmann/santa-lang-prancer](https://github.com/eddmann/santa-lang-prancer) - Tree-walking interpreter in TypeScript (Prancer)
-- [eddmann/santa-lang-comet](https://github.com/eddmann/santa-lang-comet) - Tree-walking interpreter in Rust (Comet)
-- [eddmann/santa-lang-blitzen](https://github.com/eddmann/santa-lang-blitzen) - Bytecode VM in Rust (Blitzen)
-- [eddmann/santa-lang-dasher](https://github.com/eddmann/santa-lang-dasher) - LLVM native compiler in Rust (Dasher)
-- [eddmann/santa-lang-donner](https://github.com/eddmann/santa-lang-donner) - JVM bytecode compiler in Kotlin (Donner)
+The language has been implemented multiple times to explore different execution models and technologies.
+
+| Codename | Type | Language |
+|----------|------|----------|
+| [Comet](https://github.com/eddmann/santa-lang-comet) | Tree-walking interpreter | Rust |
+| [Blitzen](https://github.com/eddmann/santa-lang-blitzen) | Bytecode VM | Rust |
+| [Dasher](https://github.com/eddmann/santa-lang-dasher) | LLVM native compiler | Rust |
+| [Donner](https://github.com/eddmann/santa-lang-donner) | JVM bytecode compiler | Kotlin |
+| [Vixen](https://github.com/eddmann/santa-lang-vixen) | Embedded bytecode VM | C |
+| [Prancer](https://github.com/eddmann/santa-lang-prancer) | Tree-walking interpreter | TypeScript |
