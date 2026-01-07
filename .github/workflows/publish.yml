@@ -12,6 +12,9 @@ jobs:
     name: Publish Docker Image
     runs-on: ubuntu-24.04
     steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
       - name: Download Docker tarball
         run: |
           gh release download ${{ github.event.release.tag_name }} \
