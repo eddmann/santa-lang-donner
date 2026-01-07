@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "dev.santa"
-version = "0.1.0-SNAPSHOT"
+version = "1.0.0"
 
 subprojects {
     apply(plugin = "org.jetbrains.kotlin.jvm")

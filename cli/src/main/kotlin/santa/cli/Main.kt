@@ -15,7 +15,7 @@ import java.io.File
 import kotlin.system.exitProcess
 
 // Version info
-private const val VERSION = "0.1.0"
+private const val VERSION = "1.0.0"
 
 // ANSI escape codes for terminal formatting
 private const val ANSI_RESET = "\u001b[0m"

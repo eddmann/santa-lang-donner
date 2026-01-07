@@ -208,6 +208,15 @@ The language has been implemented multiple times to explore different execution 
 | [Vixen](https://github.com/eddmann/santa-lang-vixen) | Embedded bytecode VM | C |
 | [Prancer](https://github.com/eddmann/santa-lang-prancer) | Tree-walking interpreter | TypeScript |
 
+## Limitations
+
+Some pattern matching scenarios are not yet implemented:
+
+- Range patterns in match expressions (e.g., `1..10`)
+- Certain complex destructuring patterns in `let` and `if let` bindings
+
+These cases will produce clear error messages if encountered.
+
 ## License
 
 MIT License - see [LICENSE](LICENSE) for details.
