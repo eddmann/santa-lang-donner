@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "dev.santa"
-version = "1.0.0"
+version = findProperty("version")?.toString()?.trimStart('v') ?: "dev"
 
 subprojects {
     apply(plugin = "org.jetbrains.kotlin.jvm")

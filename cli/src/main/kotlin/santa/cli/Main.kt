@@ -16,8 +16,8 @@ import santa.runtime.value.*
 import java.io.File
 import kotlin.system.exitProcess
 
-// Version info
-private const val VERSION = "1.0.0"
+// Version from generated BuildConfig
+private val VERSION = BuildConfig.VERSION
 
 // ANSI escape codes for terminal formatting
 private const val ANSI_RESET = "\u001b[0m"

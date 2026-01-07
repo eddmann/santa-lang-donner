@@ -10,6 +10,34 @@ application {
     applicationName = "santa-cli"
 }
 
+// Generate BuildConfig with version from root project
+tasks.register("generateBuildConfig") {
+    val outputDir = layout.buildDirectory.dir("generated/buildconfig")
+    outputs.dir(outputDir)
+
+    doLast {
+        val buildConfigFile = outputDir.get().file("santa/cli/BuildConfig.kt").asFile
+        buildConfigFile.parentFile.mkdirs()
+        buildConfigFile.writeText("""
+            package santa.cli
+
+            object BuildConfig {
+                const val VERSION = "${rootProject.version}"
+            }
+        """.trimIndent())
+    }
+}
+
+sourceSets {
+    main {
+        kotlin.srcDir(layout.buildDirectory.dir("generated/buildconfig"))
+    }
+}
+
+tasks.named("compileKotlin") {
+    dependsOn("generateBuildConfig")
+}
+
 dependencies {
     implementation(project(":compiler"))
     implementation(project(":runtime"))

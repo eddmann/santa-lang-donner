@@ -23,16 +23,14 @@ jobs:
 
       - uses: gradle/actions/setup-gradle@v3
 
-      - name: Set version
-        run: |
-          sed -i 's/version = ".*"/version = "${{ inputs.release-tag }}"/' build.gradle.kts
-
       - name: Build shadow JAR
-        run: ./gradlew :cli:shadowJar
+        run: ./gradlew :cli:shadowJar -Pversion=${{ inputs.release-tag }}
 
       - name: Upload JAR to release
         run: |
-          mv cli/build/libs/cli-all.jar santa-lang-donner-cli-${{ inputs.release-tag }}.jar
+          VERSION="${{ inputs.release-tag }}"
+          VERSION="${VERSION#v}"
+          mv cli/build/libs/cli-${VERSION}-all.jar santa-lang-donner-cli-${{ inputs.release-tag }}.jar
           gh release upload ${{ inputs.release-tag }} santa-lang-donner-cli-${{ inputs.release-tag }}.jar --clobber
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -66,12 +64,8 @@ jobs:
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y fakeroot binutils
 
-      - name: Set version
-        run: |
-          sed -i'' -e 's/version = ".*"/version = "${{ inputs.release-tag }}"/' build.gradle.kts
-
       - name: Build with jpackage
-        run: ./gradlew :cli:jpackage
+        run: ./gradlew :cli:jpackage -Pversion=${{ inputs.release-tag }}
 
       - name: Package artifact
         run: |
