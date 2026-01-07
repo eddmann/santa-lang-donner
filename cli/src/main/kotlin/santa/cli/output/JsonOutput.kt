@@ -12,6 +12,19 @@ import kotlinx.serialization.Serializable
  */
 
 // =============================================================================
+// Version output
+// =============================================================================
+
+/**
+ * JSON output for version information.
+ */
+@Serializable
+data class JsonVersionOutput(
+    val reindeer: String,
+    val version: String
+)
+
+// =============================================================================
 // Error structures (Section 16.3.5)
 // =============================================================================
 

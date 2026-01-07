@@ -1,5 +1,7 @@
 package santa.cli
 
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import santa.cli.output.*
 import santa.compiler.codegen.Compiler
 import santa.compiler.error.ErrorFormatter
@@ -35,14 +37,22 @@ fun main(args: Array<String>) {
         exitProcess(0)
     }
 
+    // Parse output mode (needed for version output)
+    val outputMode = parseOutputMode(args)
+
     // Check -v/--version
     if (args.contains("-v") || args.contains("--version")) {
-        println("santa-lang Donner $VERSION")
+        when (outputMode) {
+            OutputMode.Text -> println("santa-lang Donner $VERSION")
+            OutputMode.Json, OutputMode.Jsonl -> {
+                println(Json.encodeToString(JsonVersionOutput(
+                    reindeer = "Donner",
+                    version = VERSION
+                )))
+            }
+        }
         exitProcess(0)
     }
-
-    // Parse output mode
-    val outputMode = parseOutputMode(args)
 
     // Need a file argument (filter out -o and its argument)
     val nonFlagArgs = args.filterIndexed { i, arg ->

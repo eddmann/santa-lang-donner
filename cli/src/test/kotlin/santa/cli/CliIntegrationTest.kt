@@ -247,6 +247,30 @@ class CliIntegrationTest {
         }
 
         @Test
+        fun `version flag with json output`() {
+            cli.run("-v", "-o", "json")
+                .assertSuccess()
+                .assertStdoutContains(""""reindeer":"Donner"""")
+                .assertStdoutContains(""""version":""")
+        }
+
+        @Test
+        fun `version flag with jsonl output`() {
+            cli.run("-v", "-o", "jsonl")
+                .assertSuccess()
+                .assertStdoutContains(""""reindeer":"Donner"""")
+                .assertStdoutContains(""""version":""")
+        }
+
+        @Test
+        fun `version flag with json output reversed arg order`() {
+            cli.run("-o", "json", "-v")
+                .assertSuccess()
+                .assertStdoutContains(""""reindeer":"Donner"""")
+                .assertStdoutContains(""""version":""")
+        }
+
+        @Test
         fun `invalid output mode returns error`() {
             cli.runWithFixture("script.santa", "-o", "xml")
                 .assertExitCode(1)
