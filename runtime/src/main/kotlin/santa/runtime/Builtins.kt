@@ -269,7 +269,13 @@ object Builtins {
             }
             ListValue(value.asSequence().toList().toPersistentList())
         }
-        is LazySequenceValue -> throw SantaRuntimeException("list: cannot convert infinite LazySequence to list; use take() first")
+        is LazySequenceValue -> {
+            if (value.isFinite()) {
+                ListValue(value.toList().toPersistentList())
+            } else {
+                throw SantaRuntimeException("list: cannot convert infinite LazySequence to list; use take() first")
+            }
+        }
         else -> throw SantaRuntimeException("list: cannot convert ${value.typeName()} to List")
     }
 
