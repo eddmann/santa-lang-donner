@@ -45,8 +45,9 @@ object Builtins {
             val grapheme = value.graphemeAt(0)
             if (grapheme != null) StringValue(grapheme) else NilValue
         }
+        is SetValue -> value.elements.firstOrNull() ?: NilValue
         is LazySequenceValue -> value.generator().firstOrNull() ?: NilValue
-        else -> throw SantaRuntimeException("first: expected List or String, got ${value.typeName()}")
+        else -> throw SantaRuntimeException("first: expected List, String or Set, got ${value.typeName()}")
     }
 
     /**
