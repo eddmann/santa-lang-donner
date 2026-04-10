@@ -1209,6 +1209,12 @@ object Builtins {
             }
             is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }
             is RangeValue -> collection.asSequence().toList()
+            is LazySequenceValue -> {
+                if (!collection.isFinite()) {
+                    throw SantaRuntimeException("scan: cannot scan infinite lazy sequence (use take() first)")
+                }
+                collection.asSequence().toList()
+            }
             else -> throw SantaRuntimeException("scan: expected collection, got ${collection.typeName()}")
         }
         val results = mutableListOf<Value>()
@@ -1330,6 +1336,12 @@ object Builtins {
                 predicate.invoke(listOf(StringValue(it))).isTruthy()
             }
             is RangeValue -> collection.asSequence().count { predicate.invoke(listOf(it)).isTruthy() }
+            is LazySequenceValue -> {
+                if (!collection.isFinite()) {
+                    throw SantaRuntimeException("count: cannot count infinite lazy sequence (use take() first)")
+                }
+                collection.asSequence().count { predicate.invoke(listOf(it)).isTruthy() }
+            }
             else -> throw SantaRuntimeException("count: expected collection, got ${collection.typeName()}")
         }
         return IntValue(c.toLong())
@@ -1391,6 +1403,12 @@ object Builtins {
             is SetValue -> value.elements.toList()
             is DictValue -> value.entries.values.toList()
             is RangeValue -> value.asSequence().toList()
+            is LazySequenceValue -> {
+                if (!value.isFinite()) {
+                    throw SantaRuntimeException("max: cannot take max of infinite lazy sequence (use take() first)")
+                }
+                value.asSequence().toList()
+            }
             else -> throw SantaRuntimeException("max: expected collection, got ${value.typeName()}")
         }
         if (items.isEmpty()) return NilValue
@@ -1431,6 +1449,12 @@ object Builtins {
             is SetValue -> value.elements.toList()
             is DictValue -> value.entries.values.toList()
             is RangeValue -> value.asSequence().toList()
+            is LazySequenceValue -> {
+                if (!value.isFinite()) {
+                    throw SantaRuntimeException("min: cannot take min of infinite lazy sequence (use take() first)")
+                }
+                value.asSequence().toList()
+            }
             else -> throw SantaRuntimeException("min: expected collection, got ${value.typeName()}")
         }
         if (items.isEmpty()) return NilValue
