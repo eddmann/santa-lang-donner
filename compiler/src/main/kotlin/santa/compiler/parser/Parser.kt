@@ -394,7 +394,9 @@ class Parser(private val tokens: List<Token>) {
     private fun parseIfExpression(startToken: Token): Expr {
         val condition = parseIfCondition()
         val thenBranch = parseBlockExpression()
-        val elseBranch = if (match(TokenType.ELSE)) {
+        val elseBranch = if (peekSkippingNewlines()?.type == TokenType.ELSE) {
+            skipLineBreaks()
+            expect(TokenType.ELSE, "Expected 'else'")
             if (match(TokenType.IF)) {
                 parseIfExpression(previous())
             } else {

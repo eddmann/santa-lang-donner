@@ -998,11 +998,15 @@ object Builtins {
             }
             is RangeValue -> {
                 val seq = toSequence(collection)
-                // Unbounded ranges produce infinite sequences
-                LazySequenceValue.fromSequence(seq.mapNotNull { elem ->
-                    val mapped = mapper.invoke(listOf(elem))
-                    if (mapped.isTruthy()) mapped else null
-                })
+                val mapped = seq.mapNotNull { elem ->
+                    val m = mapper.invoke(listOf(elem))
+                    if (m.isTruthy()) m else null
+                }
+                if (collection.isUnbounded()) {
+                    LazySequenceValue.fromSequence(mapped)
+                } else {
+                    LazySequenceValue.fromFiniteSequence(mapped)
+                }
             }
             is LazySequenceValue -> {
                 val seq = toSequence(collection)
