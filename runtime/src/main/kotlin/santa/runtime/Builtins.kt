@@ -1068,14 +1068,22 @@ object Builtins {
         if (reducer !is FunctionValue) {
             throw SantaRuntimeException("reduce: reducer must be a Function")
         }
-        val items = toList(collection)
-        if (items.isEmpty()) {
+        val iterator: Iterator<Value> = when (collection) {
+            is ListValue -> collection.elements.iterator()
+            is SetValue -> collection.elements.iterator()
+            is DictValue -> collection.entries.values.iterator()
+            is StringValue -> toGraphemeList(collection.value).map { StringValue(it) as Value }.iterator()
+            is RangeValue -> collection.asSequence().iterator()
+            is LazySequenceValue -> collection.asSequence().iterator()
+            else -> throw SantaRuntimeException("reduce: expected collection, got ${collection.typeName()}")
+        }
+        if (!iterator.hasNext()) {
             throw SantaRuntimeException("reduce: cannot reduce empty collection")
         }
-        var acc = items.first()
+        var acc = iterator.next()
         try {
-            for (elem in items.drop(1)) {
-                acc = reducer.invoke(listOf(acc, elem))
+            while (iterator.hasNext()) {
+                acc = reducer.invoke(listOf(acc, iterator.next()))
             }
             return acc
         } catch (e: BreakException) {
